@@ -3,4 +3,5 @@
 archive/
 scripts/archive/
 .Rhistory
+.DS_Store
 
