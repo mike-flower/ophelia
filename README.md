@@ -12,7 +12,7 @@ A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio'
 ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
 ```
 
-With sample renaming:
+With custom sample names in BAM headers:
 ```bash
 ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta \
           --biosample_csv ~/refs/biosample.csv
@@ -27,7 +27,7 @@ With sample renaming:
 - [File Structure](#file-structure)
 - [Run Analysis](#run-analysis)
   - [Command-Line Interface](#command-line-interface)
-  - [HPC Deployment](#hpc-deployment)
+  - [HPC Deployment (Myriad)](#hpc-deployment-myriad)
 - [Parameters](#parameters)
 - [Output Structure](#output-structure)
 - [Common Workflows](#common-workflows)
@@ -63,6 +63,8 @@ source $UCL_CONDA_PATH/etc/profile.d/conda.sh
 conda activate lima
 ```
 
+**Note:** Lima is a compiled C++ binary — it doesn't require Python. Conda/bioconda is just the distribution mechanism.
+
 ### Pipeline Setup
 
 ```bash
@@ -70,6 +72,9 @@ conda activate lima
 cd ~/Scratch/bin
 git clone https://github.com/mike-flower/ophelia.git
 cd ophelia
+
+# Create logs directory (required for Myriad SGE job output)
+mkdir -p logs
 
 # Verify it's executable (should be from git)
 ./ophelia --help
@@ -112,7 +117,7 @@ CGTGTCTAGCGCGCGC
 
 ### Optional Files
 
-#### 3. Biosample CSV (for sample naming)
+#### 3. Biosample CSV (for custom sample names)
 
 **Location:** Specified by `--biosample_csv` parameter  
 **Format:** CSV mapping barcode pairs to sample names
@@ -124,12 +129,22 @@ bc1002--bc1051,bcp1-A02-bc1002--bc1051
 bc1003--bc1050,bcp1-B01-bc1003--bc1050
 ```
 
-**Effect of `--biosample_csv`:**
-- Without: Output files named by barcode (e.g., `bc1002--bc1050.bam`)
-- With: Output files named by biosample (e.g., `bcp1-A01-bc1002--bc1050.bam`)
-- Also sets the SM (sample) tag in BAM read groups
+**What `--biosample_csv` does:**
 
-**Note:** The pipeline automatically strips UTF-8 BOM characters from CSV files (common when saving from Excel).
+| Aspect | Without `--biosample_csv` | With `--biosample_csv` |
+|--------|---------------------------|------------------------|
+| **Output filenames** | `bc1002--bc1050.bam` | `bc1002--bc1050.bam` (unchanged) |
+| **BAM SM tag** | `SM:bc1002--bc1050` | `SM:bcp1-A01-bc1002--bc1050` |
+
+The biosample CSV sets the **SM (sample) tag in the BAM read group header**, not the filename. This is what downstream tools (variant callers, Duke pipeline, etc.) use to identify samples.
+
+To verify the SM tag is set correctly:
+```bash
+samtools view -H output.bam | grep "^@RG"
+# Look for SM:bcp1-A01-bc1002--bc1050
+```
+
+**Note on BOM characters:** The pipeline automatically strips UTF-8 BOM (Byte Order Mark) characters from CSV files. BOM is an invisible character (`EF BB BF` in hex) that Microsoft Excel adds to the beginning of CSV files. Many Unix tools (including lima) don't expect it and will fail to parse the header correctly. Ophelia detects this and creates a cleaned copy automatically.
 
 ---
 
@@ -141,6 +156,12 @@ ophelia/
 ├── scripts/
 │   ├── ophelia_cli.sh        # Core pipeline logic
 │   └── ophelia_myriad.sh     # HPC job submission script
+├── logs/                     # Pipeline logs (created automatically)
+│   ├── 20260127_143022/      # Timestamped run directories
+│   │   ├── ophelia.log
+│   │   └── ophelia_params.txt
+│   └── ...
+├── www/                      # Reference files (barcodes, biosample CSV)
 └── README.md
 ```
 
@@ -170,15 +191,90 @@ ophelia/
 ./ophelia --help
 ```
 
-### HPC Deployment
+**Dry run (test without executing):**
+```bash
+./ophelia \
+    --dir_data /path/to/bam \
+    --dir_out /path/to/results \
+    --barcode_ref /path/to/barcodes.fasta \
+    --dry_run
+```
 
-#### Job Submission (Myriad)
+### HPC Deployment (Myriad)
 
-1. Edit parameters in `scripts/ophelia_myriad.sh`
-2. Submit the job:
+#### First-Time Setup
+
+```bash
+# 1. Create conda environment (one-time)
+module load python/miniconda3/24.3.0-0
+source $UCL_CONDA_PATH/etc/profile.d/conda.sh
+conda create -n lima -c bioconda lima
+
+# 2. Clone the pipeline
+cd ~/Scratch/bin
+git clone https://github.com/mike-flower/ophelia.git
+cd ophelia
+
+# 3. Create logs directory for SGE job output (REQUIRED before job submission)
+mkdir -p logs
+```
+
+**Note:** The `logs/` directory serves two purposes:
+- SGE writes job stdout/stderr here (`ophelia_<JOB_ID>.out/.err`)
+- Pipeline creates timestamped subdirectories for run logs (`logs/20260127_143022/ophelia.log`)
+
+#### Job Submission
+
+1. Copy and edit the Myriad template:
    ```bash
-   qsub scripts/ophelia_myriad.sh
+   cp scripts/ophelia_myriad.sh scripts/ophelia_myriad_myrun.sh
+   nano scripts/ophelia_myriad_myrun.sh  # Edit parameters
    ```
+
+2. **Important:** Ensure the logs directory exists (SGE creates log files before the script runs):
+   ```bash
+   mkdir -p logs
+   ```
+
+3. Submit the job:
+   ```bash
+   qsub scripts/ophelia_myriad_myrun.sh
+   ```
+
+#### Example Myriad Job Script
+
+```bash
+#!/bin/bash -l
+#$ -S /bin/bash
+#$ -N ophelia_demux
+#$ -l h_rt=12:00:00
+#$ -pe smp 12
+#$ -l mem=4G
+#$ -l tmpfs=50G
+#$ -wd /home/skgtmdf/Scratch/bin/ophelia
+#$ -o logs/ophelia_$JOB_ID.out
+#$ -e logs/ophelia_$JOB_ID.err
+#$ -M your.email@ucl.ac.uk
+#$ -m bea
+
+# Load environment
+module load python/miniconda3/24.3.0-0
+source $UCL_CONDA_PATH/etc/profile.d/conda.sh
+conda activate lima
+
+# Change to ophelia directory
+cd ~/Scratch/bin/ophelia
+
+# Run pipeline
+./ophelia \
+    --dir_data /home/skgtmdf/Scratch/data/my_experiment/bam \
+    --dir_out /home/skgtmdf/Scratch/data/my_experiment/result_ophelia \
+    --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
+    --biosample_csv /home/skgtmdf/Scratch/bin/ophelia/www/biosample.csv \
+    --file_pattern "*bc20*.bam" \
+    --threads $NSLOTS \
+    --resume TRUE
+```
 
 #### Monitoring Jobs
 
@@ -189,8 +285,11 @@ qstat -u $USER
 # Watch job status (updates every 30s)
 watch -n 30 'qstat -u $USER'
 
-# View live output
-tail -f logs/ophelia_$JOB_ID.out
+# Check job details (useful for debugging)
+qstat -j <JOB_ID>
+
+# View live output (after job starts)
+tail -f logs/ophelia_<JOB_ID>.out
 
 # Cancel job
 qdel <JOB_ID>
@@ -201,8 +300,10 @@ qdel <JOB_ID>
 | Run Size | Files | Reads/File | Cores | Memory | Runtime |
 |----------|-------|------------|-------|--------|---------|
 | Small    | 1-4   | <100k      | 8     | 4G     | 4h      |
-| Medium   | 4-8   | ~500k      | 16    | 4G     | 12h     |
-| Large    | 8+    | >1M        | 24    | 4G     | 24h     |
+| Medium   | 4-8   | ~500k      | 12    | 4G     | 12h     |
+| Large    | 8+    | >1M        | 16-24 | 4G     | 24h     |
+
+Lima is well-parallelised internally. Memory usage is typically low (4G per core is usually sufficient).
 
 ---
 
@@ -220,7 +321,7 @@ qdel <JOB_ID>
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--biosample_csv` | none | CSV mapping barcodes to sample names |
+| `--biosample_csv` | none | CSV mapping barcodes to sample names (sets SM tag in BAM) |
 | `--file_pattern` | `*.bam` | Glob pattern to match input files |
 | `--threads` | auto | Number of threads for lima |
 
@@ -235,9 +336,9 @@ qdel <JOB_ID>
 
 | Argument | Description |
 |----------|-------------|
-| `--split-named` | Name output files by barcode names (not indices) |
+| `--split-named` | Name output files by barcode names (`bc1002--bc1050.bam`) instead of indices (`0--12.bam`) |
 | `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode |
-| `--peek-guess` | Infer which barcodes are present (for unknown samples) |
+| `--peek-guess` | Infer which barcodes are present (slower, two-pass) |
 | `--dump-removed` | Save reads that were filtered out |
 
 ### Execution Options
@@ -252,32 +353,52 @@ qdel <JOB_ID>
 
 ## Output Structure
 
+**Pipeline logs** (in ophelia installation directory):
+```
+ophelia/logs/
+├── 20260127_143022/                           # Timestamped run directory
+│   ├── ophelia.log                            # Full pipeline log
+│   └── ophelia_params.txt                     # Parameters used
+├── 20260127_160045/
+│   ├── ophelia.log
+│   └── ophelia_params.txt
+```
+
+**Results** (in your specified output directory):
 ```
 dir_out/
 ├── demux_bc2001/                              # One folder per input BAM
 │   ├── m84277_...bc2001.demux.bc1002--bc1050.bam
 │   ├── m84277_...bc2001.demux.bc1002--bc1051.bam
-│   ├── m84277_...bc2001.demux.bcp1-A01-bc1002--bc1050.bam  # (with biosample)
+│   ├── m84277_...bc2001.demux.unbarcoded.bam  # Unassigned reads
 │   ├── m84277_...bc2001.demux.lima.summary    # Summary statistics
 │   ├── m84277_...bc2001.demux.lima.report     # Detailed report
 │   └── m84277_...bc2001.demux.lima.counts     # Per-barcode counts
 ├── demux_bc2002/
 │   └── ...
-├── logs/
-│   ├── ophelia_20260127_143022.log            # Pipeline log
-│   └── ophelia_params_20260127_143022.txt     # Saved parameters
-└── ophelia_summary.txt                        # Overall summary
+├── biosample_cleaned.csv                      # BOM-stripped CSV (if applicable)
+└── ophelia_summary.txt                        # Overall demux summary
 ```
 
 ### Output Files
 
+**In results directory:**
+
 | File | Description |
 |------|-------------|
 | `*.demux.*.bam` | Demultiplexed BAM files (one per barcode pair) |
+| `*.demux.unbarcoded.bam` | Reads that couldn't be assigned to a barcode pair |
 | `*.lima.summary` | Summary statistics (ZMWs processed, passed, etc.) |
 | `*.lima.report` | Detailed per-read barcode assignments |
 | `*.lima.counts` | Read counts per barcode pair |
-| `ophelia_summary.txt` | Overall pipeline summary |
+| `ophelia_summary.txt` | Overall demux summary (pass rates per file) |
+
+**In ophelia/logs/YYYYMMDD_HHMMSS/:**
+
+| File | Description |
+|------|-------------|
+| `ophelia.log` | Complete pipeline log with timestamps |
+| `ophelia_params.txt` | All parameters used for the run |
 
 ---
 
@@ -294,9 +415,11 @@ When you know which barcode combinations are present:
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
 ```
 
-### 2. With Sample Renaming
+Output files will be named by barcode pairs (e.g., `bc1002--bc1050.bam`) and the BAM SM tag will also be the barcode pair.
 
-Files named by human-readable sample names instead of barcode pairs:
+### 2. With Custom Sample Names (SM tag)
+
+Set human-readable sample names in the BAM read group header:
 
 ```bash
 ./ophelia \
@@ -305,6 +428,8 @@ Files named by human-readable sample names instead of barcode pairs:
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
     --biosample_csv ~/refs/biosample.csv
 ```
+
+Output filenames remain barcode pairs, but the SM tag in the BAM header will be the biosample name. This is what downstream tools use for sample identification.
 
 ### 3. Unknown Barcodes
 
@@ -318,16 +443,18 @@ When you don't know which barcode combinations are present (lima will infer):
     --lima_args "--split-named --store-unbarcoded --peek-guess"
 ```
 
+**Note:** `--peek-guess` is slower (two-pass) and should not be combined with `--biosample_csv`.
+
 ### 4. Process Specific Files
 
-Process only certain barcode files:
+Process only certain barcode files (e.g., exclude `unassigned.bam`):
 
 ```bash
 ./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --file_pattern "*bc200[1-4].bam"
+    --file_pattern "*bc20*.bam"
 ```
 
 ### 5. Test Run (Dry Run)
@@ -342,15 +469,15 @@ See what would happen without actually running:
     --dry_run
 ```
 
-### 6. Re-run Failed Files
+### 6. Resume After Interruption
 
-The resume feature skips completed files:
+The `--resume TRUE` option (default) skips files that have already been processed. Ophelia checks for the existence of `.lima.summary` files to determine completion.
 
 ```bash
-# First run (some files fail)
+# First run (interrupted or some files fail)
 ./ophelia --dir_data ~/data/bam --dir_out ~/results ...
 
-# Fix issues, then re-run (only processes failed files)
+# Re-run (only processes incomplete files)
 ./ophelia --dir_data ~/data/bam --dir_out ~/results ... --resume TRUE
 ```
 
@@ -364,7 +491,8 @@ To force re-processing of all files:
 
 ## Troubleshooting
 
-**"lima: command not found"**
+### "lima: command not found"
+
 ```bash
 # Activate conda environment
 conda activate lima
@@ -375,14 +503,26 @@ source $UCL_CONDA_PATH/etc/profile.d/conda.sh
 conda activate lima
 ```
 
-**"scripts/ophelia_cli.sh not found"**
+### "scripts/ophelia_cli.sh not found"
+
 ```bash
 # Run from the ophelia root directory
 cd ~/Scratch/bin/ophelia
 ./ophelia --help
 ```
 
-**"No BAM files found"**
+### "can't open output file ... logs/ophelia_XXX.out: No such file or directory" (Myriad)
+
+SGE creates log files **before** the job script runs, so the logs directory must exist beforehand:
+
+```bash
+cd ~/Scratch/bin/ophelia
+mkdir -p logs
+qsub scripts/ophelia_myriad.sh
+```
+
+### "No BAM files found"
+
 ```bash
 # Check files exist
 ls /path/to/data/*.bam
@@ -391,17 +531,21 @@ ls /path/to/data/*.bam
 ./ophelia --dir_data /path/to/data --file_pattern "*.hifi_reads.*.bam" ...
 ```
 
-**"Biosample CSV parsing error"**
+### "Biosample CSV parsing error" or sample names not appearing
+
+The pipeline automatically handles BOM characters, but you can check manually:
+
 ```bash
-# BOM character issue (common from Excel)
-# The pipeline handles this automatically, but to check:
+# Check for BOM (will show ef bb bf at start if present)
 head -c 3 biosample.csv | xxd
 
-# Manual fix if needed:
+# Manual fix if needed
 sed -i '1s/^\xEF\xBB\xBF//' biosample.csv
 ```
 
-**"Low demultiplexing rate"**
+**What is BOM?** BOM (Byte Order Mark) is an invisible character (`EF BB BF` in hex) that Microsoft Excel and some Windows programs add to the beginning of UTF-8 files. Lima and many Unix tools don't expect it, causing the header to be misread. Ophelia automatically creates a BOM-stripped copy (`biosample_cleaned.csv`) in the output directory.
+
+### "Low demultiplexing rate"
 
 Check the `*.lima.summary` file:
 ```bash
@@ -413,13 +557,40 @@ Common causes:
 - Wrong `--lima_preset` (try `ASYMMETRIC` vs `SYMMETRIC`)
 - Try `--peek-guess` to see which barcodes are actually present
 
-**"Job killed on Myriad"**
+### Checking Pipeline Logs
+
 ```bash
-# Request more resources in ophelia_myriad.sh:
+# List all runs
+ls ~/Scratch/bin/ophelia/logs/
+
+# View most recent log
+ls -t ~/Scratch/bin/ophelia/logs/ | head -1 | xargs -I {} cat ~/Scratch/bin/ophelia/logs/{}/ophelia.log
+
+# Check for errors in a specific run
+grep -i "error\|failed" ~/Scratch/bin/ophelia/logs/20260127_143022/ophelia.log
+
+# View parameters used
+cat ~/Scratch/bin/ophelia/logs/20260127_143022/ophelia_params.txt
+```
+
+### "Job killed on Myriad"
+
+Request more resources in your job script:
+```bash
 #$ -l h_rt=24:00:00    # More time
 #$ -pe smp 16          # More cores
 #$ -l mem=8G           # More memory per core
 ```
+
+### Checking BAM SM tags
+
+To verify the biosample CSV worked correctly:
+```bash
+module load samtools  # Or: conda install -n lima -c bioconda samtools
+samtools view -H output.bam | grep "^@RG"
+```
+
+Look for `SM:bcp1-A01-bc1002--bc1050` (your biosample name) rather than `SM:bc1002--bc1050` (barcode pair).
 
 ---
 
@@ -429,7 +600,7 @@ Common causes:
 |---------|----------------|-------------------|
 | **Use when** | Unknown which barcodes are present | Known barcode-to-sample mapping |
 | **Speed** | Slower (two-pass) | Faster (single-pass) |
-| **Output naming** | By barcode pairs | By biosample name |
+| **Output naming** | By barcode pairs | By barcode pairs |
 | **BAM SM tag** | Barcode pair | Biosample name |
 
 **Note:** Don't combine `--peek-guess` with `--biosample_csv` — use one or the other.
@@ -450,6 +621,11 @@ London, UK
 ---
 
 ## Version History
+
+### 1.0.1 (January 2026)
+- Moved pipeline logs to `ophelia/logs/` with timestamped subdirectories
+- Consistent log filenames: `ophelia.log` and `ophelia_params.txt`
+- Results summary (`ophelia_summary.txt`) now in output directory only
 
 ### 1.0.0 (January 2026)
 - Initial release

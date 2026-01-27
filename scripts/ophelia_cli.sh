@@ -8,11 +8,20 @@
 #
 # Author: Michael Flower
 # Institution: UCL Queen Square Institute of Neurology
-# Version: 1.0.0
+# Version: 1.0.1
 #
 #===============================================================================
 
 set -euo pipefail
+
+#===============================================================================
+# SCRIPT DIRECTORY
+#===============================================================================
+
+# Get the directory where this script is located (ophelia/scripts)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get the root ophelia directory (parent of scripts/)
+OPHELIA_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 
 #===============================================================================
 # DEFAULTS
@@ -562,15 +571,14 @@ generate_summary() {
 #===============================================================================
 
 save_parameters() {
-    local params_file="${DIR_OUT}/logs/ophelia_params_$(date +%Y%m%d_%H%M%S).txt"
-
-    mkdir -p "${DIR_OUT}/logs"
+    local params_file="${LOG_DIR}/ophelia_params.txt"
 
     {
         echo "Ophelia Pipeline Parameters"
         echo "==========================="
         echo ""
         echo "Timestamp: $(date)"
+        echo "Log directory: ${LOG_DIR}"
         echo ""
         echo "# Required"
         echo "dir_data=${DIR_DATA}"
@@ -614,13 +622,17 @@ main() {
 
     # Create output directory
     mkdir -p "${DIR_OUT}"
-    mkdir -p "${DIR_OUT}/logs"
 
-    # Setup logging
-    LOG_FILE="${DIR_OUT}/logs/ophelia_$(date +%Y%m%d_%H%M%S).log"
+    # Setup logging in ophelia root directory with timestamped subdirectory
+    RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    LOG_DIR="${OPHELIA_ROOT}/logs/${RUN_TIMESTAMP}"
+    mkdir -p "${LOG_DIR}"
+    
+    LOG_FILE="${LOG_DIR}/ophelia.log"
     exec > >(tee -a "${LOG_FILE}") 2>&1
 
-    log_info "Log file: ${LOG_FILE}"
+    log_info "Log directory: ${LOG_DIR}"
+    log_info "Output directory: ${DIR_OUT}"
 
     # Save parameters
     save_parameters
@@ -667,7 +679,7 @@ main() {
     log_info "Succeeded:   ${succeeded}"
     log_info "Failed:      ${failed}"
     log_info "Duration:    $(printf "%02d:%02d:%02d" ${hours} ${minutes} ${seconds}) (HH:MM:SS)"
-    log_info "Log file:    ${LOG_FILE}"
+    log_info "Logs:        ${LOG_DIR}"
 
     if [[ ${failed} -gt 0 ]]; then
         log_warn "Some files failed to process. Check log for details."
