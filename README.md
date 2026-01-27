@@ -2,21 +2,20 @@
 
 A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio's lima tool.
 
-**Version 1.0.0**
+**Version 1.0.2**
 
 ---
 
 ## Quick Start
 
 ```bash
-./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results \
+    --barcode_ref ~/refs/barcodes.fasta
 ```
 
-With custom sample names in BAM headers:
-```bash
-./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta \
-          --biosample_csv ~/refs/biosample.csv
-```
+Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`).
 
 ---
 
@@ -117,7 +116,11 @@ CGTGTCTAGCGCGCGC
 
 ### Optional Files
 
-#### 3. Biosample CSV (for custom sample names)
+#### 3. Biosample CSV (optional — for custom SM tags)
+
+**Most users don't need this.** The output filename (`bc1002--bc1050.bam`) is the reliable sample identifier.
+
+Use `--biosample_csv` only if downstream tools require custom sample names in the BAM `@RG SM:` tag.
 
 **Location:** Specified by `--biosample_csv` parameter  
 **Format:** CSV mapping barcode pairs to sample names
@@ -134,17 +137,18 @@ bc1003--bc1050,bcp1-B01-bc1003--bc1050
 | Aspect | Without `--biosample_csv` | With `--biosample_csv` |
 |--------|---------------------------|------------------------|
 | **Output filenames** | `bc1002--bc1050.bam` | `bc1002--bc1050.bam` (unchanged) |
-| **BAM SM tag** | `SM:bc1002--bc1050` | `SM:bcp1-A01-bc1002--bc1050` |
+| **BAM SM tag** | Preserved from input (e.g., `SM:lib_05`) | Overwritten with biosample name |
 
-The biosample CSV sets the **SM (sample) tag in the BAM read group header**, not the filename. This is what downstream tools (variant callers, Duke pipeline, etc.) use to identify samples.
+Without `--biosample_csv`, lima **preserves** the original `@RG` metadata from the input BAM, including the SM tag set during sequencing run setup (e.g., `SM:lib_05`). With `--biosample_csv`, lima **overrides** the SM tag with your mapped biosample name.
 
-To verify the SM tag is set correctly:
+To check the SM tag:
 ```bash
 samtools view -H output.bam | grep "^@RG"
-# Look for SM:bcp1-A01-bc1002--bc1050
+# Without biosample_csv: SM:lib_05 (from sequencing setup)
+# With biosample_csv:    SM:bcp1-A01-bc1002--bc1050
 ```
 
-**Note on BOM characters:** The pipeline automatically strips UTF-8 BOM (Byte Order Mark) characters from CSV files. BOM is an invisible character (`EF BB BF` in hex) that Microsoft Excel adds to the beginning of CSV files. Many Unix tools (including lima) don't expect it and will fail to parse the header correctly. Ophelia detects this and creates a cleaned copy automatically.
+**Note on BOM characters:** The pipeline automatically strips UTF-8 BOM (Byte Order Mark) characters from CSV files. BOM is an invisible character (`EF BB BF` in hex) that Microsoft Excel adds to CSV files. Ophelia detects this and creates a cleaned copy automatically.
 
 ---
 
@@ -182,7 +186,6 @@ ophelia/
     --dir_data /path/to/bam \
     --dir_out /path/to/results \
     --barcode_ref /path/to/barcodes.fasta \
-    --biosample_csv /path/to/biosample.csv \
     --threads 8
 ```
 
@@ -270,7 +273,6 @@ cd ~/Scratch/bin/ophelia
     --dir_data /home/skgtmdf/Scratch/data/my_experiment/bam \
     --dir_out /home/skgtmdf/Scratch/data/my_experiment/result_ophelia \
     --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
-    --biosample_csv /home/skgtmdf/Scratch/bin/ophelia/www/biosample.csv \
     --file_pattern "*bc20*.bam" \
     --threads $NSLOTS \
     --resume TRUE
@@ -299,11 +301,11 @@ qdel <JOB_ID>
 
 | Run Size | Files | Reads/File | Cores | Memory | Runtime |
 |----------|-------|------------|-------|--------|---------|
-| Small    | 1-4   | <100k      | 8     | 4G     | 4h      |
-| Medium   | 4-8   | ~500k      | 12    | 4G     | 12h     |
-| Large    | 8+    | >1M        | 16-24 | 4G     | 24h     |
+| Small | 1-4 | <100k | 8 | 4G | 4h |
+| Medium | 4-8 | ~500k | 12 | 4G | 12h |
+| Large | 8+ | >1M | 16-24 | 4G | 24h |
 
-Lima is well-parallelised internally. Memory usage is typically low (4G per core is usually sufficient).
+Lima is well-parallelised internally. Files are processed sequentially (one at a time), each using multiple threads.
 
 ---
 
@@ -314,25 +316,25 @@ Lima is well-parallelised internally. Memory usage is typically low (4G per core
 | Parameter | Description |
 |-----------|-------------|
 | `--dir_data` | Directory containing input BAM files |
-| `--dir_out` | Output directory for results |
-| `--barcode_ref` | Reference barcode FASTA file |
+| `--dir_out` | Directory for output files |
+| `--barcode_ref` | FASTA file with barcode sequences |
 
 ### Optional Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--biosample_csv` | none | CSV mapping barcodes to sample names (sets SM tag in BAM) |
-| `--file_pattern` | `*.bam` | Glob pattern to match input files |
-| `--threads` | auto | Number of threads for lima |
+| `--biosample_csv` | *(none)* | CSV mapping barcodes to sample names (overrides SM tag) |
+| `--file_pattern` | `*.bam` | Glob pattern for BAM files to process |
+| `--threads` | Auto-detect | Number of CPU threads for lima |
 
 ### Lima Arguments
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--lima_preset` | `ASYMMETRIC` | Lima HiFi preset (`ASYMMETRIC`, `SYMMETRIC`, `SYMMETRIC-ADAPTERS`) |
-| `--lima_args` | `--split-named --store-unbarcoded` | Additional lima command-line arguments |
+| `--lima_preset` | `ASYMMETRIC` | Barcode preset (`ASYMMETRIC`, `SYMMETRIC`, `TAILED`) |
+| `--lima_args` | `--split-named --store-unbarcoded` | Additional arguments passed to lima |
 
-**Common lima arguments:**
+**Common lima argument additions:**
 
 | Argument | Description |
 |----------|-------------|
@@ -404,9 +406,9 @@ dir_out/
 
 ## Common Workflows
 
-### 1. Basic Demultiplexing
+### 1. Basic Demultiplexing (recommended)
 
-When you know which barcode combinations are present:
+Standard workflow for most users:
 
 ```bash
 ./ophelia \
@@ -415,21 +417,19 @@ When you know which barcode combinations are present:
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
 ```
 
-Output files will be named by barcode pairs (e.g., `bc1002--bc1050.bam`) and the BAM SM tag will also be the barcode pair.
+Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`). The filename is the reliable sample identifier for downstream analysis.
 
-### 2. With Custom Sample Names (SM tag)
+### 2. Process Specific Files
 
-Set human-readable sample names in the BAM read group header:
+Process only certain barcode files (e.g., exclude `unassigned.bam`):
 
 ```bash
 ./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --biosample_csv ~/refs/biosample.csv
+    --file_pattern "*bc20*.bam"
 ```
-
-Output filenames remain barcode pairs, but the SM tag in the BAM header will be the biosample name. This is what downstream tools use for sample identification.
 
 ### 3. Unknown Barcodes
 
@@ -443,21 +443,9 @@ When you don't know which barcode combinations are present (lima will infer):
     --lima_args "--split-named --store-unbarcoded --peek-guess"
 ```
 
-**Note:** `--peek-guess` is slower (two-pass) and should not be combined with `--biosample_csv`.
+**Note:** `--peek-guess` is slower (two-pass).
 
-### 4. Process Specific Files
-
-Process only certain barcode files (e.g., exclude `unassigned.bam`):
-
-```bash
-./ophelia \
-    --dir_data ~/data/bam \
-    --dir_out ~/results/demux \
-    --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --file_pattern "*bc20*.bam"
-```
-
-### 5. Test Run (Dry Run)
+### 4. Test Run (Dry Run)
 
 See what would happen without actually running:
 
@@ -469,7 +457,7 @@ See what would happen without actually running:
     --dry_run
 ```
 
-### 6. Resume After Interruption
+### 5. Resume After Interruption
 
 The `--resume TRUE` option (default) skips files that have already been processed. Ophelia checks for the existence of `.lima.summary` files to determine completion.
 
@@ -486,6 +474,20 @@ To force re-processing of all files:
 ```bash
 ./ophelia --dir_data ~/data/bam --dir_out ~/results ... --resume FALSE
 ```
+
+### 6. Custom SM Tags (optional)
+
+If downstream tools require custom sample names in the BAM `@RG SM:` tag:
+
+```bash
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results/demux \
+    --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+    --biosample_csv ~/refs/biosample.csv
+```
+
+This overrides the original SM tag (e.g., `SM:lib_05` from sequencing setup) with your biosample name. Most users don't need this — use filenames for sample tracking instead.
 
 ---
 
@@ -543,8 +545,6 @@ head -c 3 biosample.csv | xxd
 sed -i '1s/^\xEF\xBB\xBF//' biosample.csv
 ```
 
-**What is BOM?** BOM (Byte Order Mark) is an invisible character (`EF BB BF` in hex) that Microsoft Excel and some Windows programs add to the beginning of UTF-8 files. Lima and many Unix tools don't expect it, causing the header to be misread. Ophelia automatically creates a BOM-stripped copy (`biosample_cleaned.csv`) in the output directory.
-
 ### "Low demultiplexing rate"
 
 Check the `*.lima.summary` file:
@@ -582,28 +582,23 @@ Request more resources in your job script:
 #$ -l mem=8G           # More memory per core
 ```
 
-### Checking BAM SM tags
+### Checking BAM Read Group Header
 
-To verify the biosample CSV worked correctly:
+To inspect the full `@RG` metadata:
 ```bash
-module load samtools  # Or: conda install -n lima -c bioconda samtools
+module load samtools
 samtools view -H output.bam | grep "^@RG"
 ```
 
-Look for `SM:bcp1-A01-bc1002--bc1050` (your biosample name) rather than `SM:bc1002--bc1050` (barcode pair).
+Example output:
+```
+@RG  ID:60310e2c/0--16  PL:PACBIO  SM:lib_05  LB:MF_Pool2_5-8  BC:ACACACAGACTGTGAG-GATATACGCGAGAGAG  ...
+```
 
----
-
-## Key Differences: `--peek-guess` vs `--biosample_csv`
-
-| Feature | `--peek-guess` | `--biosample_csv` |
-|---------|----------------|-------------------|
-| **Use when** | Unknown which barcodes are present | Known barcode-to-sample mapping |
-| **Speed** | Slower (two-pass) | Faster (single-pass) |
-| **Output naming** | By barcode pairs | By barcode pairs |
-| **BAM SM tag** | Barcode pair | Biosample name |
-
-**Note:** Don't combine `--peek-guess` with `--biosample_csv` — use one or the other.
+Key fields:
+- `SM:` — Sample name (from sequencing setup, or overridden by `--biosample_csv`)
+- `LB:` — Library name from sequencing setup
+- `BC:` — Actual barcode sequences detected
 
 ---
 
@@ -621,6 +616,12 @@ London, UK
 ---
 
 ## Version History
+
+### 1.0.2 (January 2026)
+- Made `--biosample_csv` clearly optional in documentation
+- Clarified SM tag behavior: preserved from input without biosample_csv, overridden with it
+- Simplified quick start and common workflows
+- Basic demultiplexing (without biosample_csv) is now the primary workflow
 
 ### 1.0.1 (January 2026)
 - Moved pipeline logs to `ophelia/logs/` with timestamped subdirectories
