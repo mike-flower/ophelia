@@ -6,7 +6,7 @@ A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio'
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
 ./ophelia \
@@ -19,24 +19,24 @@ Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`).
 
 ---
 
-## Table of Contents
+## Table of contents
 
 - [Installation](#installation)
-- [Input File Requirements](#input-file-requirements)
-- [File Structure](#file-structure)
-- [Run Analysis](#run-analysis)
-  - [Command-Line Interface](#command-line-interface)
-  - [HPC Deployment (Myriad)](#hpc-deployment-myriad)
+- [Input file requirements](#input-file-requirements)
+- [File structure](#file-structure)
+- [Run analysis](#run-analysis)
+  - [Command-line interface](#command-line-interface)
+  - [HPC deployment (Myriad)](#hpc-deployment-myriad)
 - [Parameters](#parameters)
-- [Output Structure](#output-structure)
-- [Common Workflows](#common-workflows)
+- [Output structure](#output-structure)
+- [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Installation
 
-### AWS / Linux Server
+### AWS / Linux server
 
 ```bash
 # Using micromamba (recommended)
@@ -64,7 +64,7 @@ conda activate lima
 
 **Note:** Lima is a compiled C++ binary — it doesn't require Python. Conda/bioconda is just the distribution mechanism.
 
-### Pipeline Setup
+### Pipeline setup
 
 ```bash
 # Clone the ophelia pipeline
@@ -81,11 +81,11 @@ mkdir -p logs
 
 ---
 
-## Input File Requirements
+## Input file requirements
 
-### Required Files
+### Required files
 
-#### 1. Sequencing Data (BAM files)
+#### 1. Sequencing data (BAM files)
 
 **Location:** Specified by `--dir_data` parameter  
 **Format:** PacBio HiFi BAM files (already demultiplexed by primary barcode)
@@ -98,7 +98,7 @@ data/
 └── m84277_251024_160109_s2.hifi_reads.bc2004.bam
 ```
 
-#### 2. Barcode Reference FASTA
+#### 2. Barcode reference FASTA
 
 **Location:** Specified by `--barcode_ref` parameter  
 **Format:** FASTA file with barcode sequences
@@ -114,7 +114,7 @@ GATATACGCGAGAGAG
 CGTGTCTAGCGCGCGC
 ```
 
-### Optional Files
+### Optional files
 
 #### 3. Biosample CSV (optional — for custom SM tags)
 
@@ -152,7 +152,7 @@ samtools view -H output.bam | grep "^@RG"
 
 ---
 
-## File Structure
+## File structure
 
 ```
 ophelia/
@@ -171,9 +171,9 @@ ophelia/
 
 ---
 
-## Run Analysis
+## Run analysis
 
-### Command-Line Interface
+### Command-line interface
 
 **Basic usage:**
 ```bash
@@ -203,9 +203,9 @@ ophelia/
     --dry_run
 ```
 
-### HPC Deployment (Myriad)
+### HPC deployment (Myriad)
 
-#### First-Time Setup
+#### First-time setup
 
 ```bash
 # 1. Create conda environment (one-time)
@@ -226,7 +226,7 @@ mkdir -p logs
 - SGE writes job stdout/stderr here (`ophelia_<JOB_ID>.out/.err`)
 - Pipeline creates timestamped subdirectories for run logs (`logs/20260127_143022/ophelia.log`)
 
-#### Job Submission
+#### Job submission
 
 1. Copy and edit the Myriad template:
    ```bash
@@ -244,7 +244,7 @@ mkdir -p logs
    qsub scripts/ophelia_myriad_myrun.sh
    ```
 
-#### Example Myriad Job Script
+#### Example Myriad job script
 
 ```bash
 #!/bin/bash -l
@@ -278,7 +278,7 @@ cd ~/Scratch/bin/ophelia
     --resume TRUE
 ```
 
-#### Monitoring Jobs
+#### Monitoring jobs
 
 ```bash
 # Check job status
@@ -297,7 +297,7 @@ tail -f logs/ophelia_<JOB_ID>.out
 qdel <JOB_ID>
 ```
 
-#### Resource Recommendations
+#### Resource recommendations
 
 | Run Size | Files | Reads/File | Cores | Memory | Runtime |
 |----------|-------|------------|-------|--------|---------|
@@ -311,7 +311,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 
 ## Parameters
 
-### Required Parameters
+### Required parameters
 
 | Parameter | Description |
 |-----------|-------------|
@@ -319,7 +319,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 | `--dir_out` | Directory for output files |
 | `--barcode_ref` | FASTA file with barcode sequences |
 
-### Optional Parameters
+### Optional parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -327,7 +327,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 | `--file_pattern` | `*.bam` | Glob pattern for BAM files to process |
 | `--threads` | Auto-detect | Number of CPU threads for lima |
 
-### Lima Arguments
+### Lima arguments
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -343,7 +343,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 | `--peek-guess` | Infer which barcodes are present (slower, two-pass) |
 | `--dump-removed` | Save reads that were filtered out |
 
-### Execution Options
+### Execution options
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -353,7 +353,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 
 ---
 
-## Output Structure
+## Output structure
 
 **Pipeline logs** (in ophelia installation directory):
 ```
@@ -382,7 +382,7 @@ dir_out/
 └── ophelia_summary.txt                        # Overall demux summary
 ```
 
-### Output Files
+### Output files
 
 **In results directory:**
 
@@ -404,9 +404,9 @@ dir_out/
 
 ---
 
-## Common Workflows
+## Common workflows
 
-### 1. Basic Demultiplexing (recommended)
+### 1. Basic demultiplexing (recommended)
 
 Standard workflow for most users:
 
@@ -419,7 +419,7 @@ Standard workflow for most users:
 
 Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`). The filename is the reliable sample identifier for downstream analysis.
 
-### 2. Process Specific Files
+### 2. Process specific files
 
 Process only certain barcode files (e.g., exclude `unassigned.bam`):
 
@@ -431,7 +431,7 @@ Process only certain barcode files (e.g., exclude `unassigned.bam`):
     --file_pattern "*bc20*.bam"
 ```
 
-### 3. Unknown Barcodes
+### 3. Unknown barcodes
 
 When you don't know which barcode combinations are present (lima will infer):
 
@@ -445,7 +445,7 @@ When you don't know which barcode combinations are present (lima will infer):
 
 **Note:** `--peek-guess` is slower (two-pass).
 
-### 4. Test Run (Dry Run)
+### 4. Test run (dry run)
 
 See what would happen without actually running:
 
@@ -457,7 +457,7 @@ See what would happen without actually running:
     --dry_run
 ```
 
-### 5. Resume After Interruption
+### 5. Resume after interruption
 
 The `--resume TRUE` option (default) skips files that have already been processed. Ophelia checks for the existence of `.lima.summary` files to determine completion.
 
@@ -475,7 +475,7 @@ To force re-processing of all files:
 ./ophelia --dir_data ~/data/bam --dir_out ~/results ... --resume FALSE
 ```
 
-### 6. Custom SM Tags (optional)
+### 6. Custom SM tags (optional)
 
 If downstream tools require custom sample names in the BAM `@RG SM:` tag:
 
@@ -557,7 +557,7 @@ Common causes:
 - Wrong `--lima_preset` (try `ASYMMETRIC` vs `SYMMETRIC`)
 - Try `--peek-guess` to see which barcodes are actually present
 
-### Checking Pipeline Logs
+### Checking pipeline logs
 
 ```bash
 # List all runs
@@ -582,7 +582,7 @@ Request more resources in your job script:
 #$ -l mem=8G           # More memory per core
 ```
 
-### Checking BAM Read Group Header
+### Checking BAM read group header
 
 To inspect the full `@RG` metadata:
 ```bash
@@ -615,7 +615,7 @@ London, UK
 
 ---
 
-## Version History
+## Version history
 
 ### 1.0.2 (January 2026)
 - Made `--biosample_csv` clearly optional in documentation
