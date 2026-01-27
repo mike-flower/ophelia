@@ -1,22 +1,22 @@
 #!/bin/bash -l
 #$ -S /bin/bash
-#$ -N lima_demux
+#$ -N ophelia_demux
 #$ -l h_rt=12:00:00
 #$ -pe smp 8
 #$ -l mem=4G
 #$ -l tmpfs=50G
-#$ -wd /home/skgtmdf/Scratch/bin/lima
-#$ -o logs/lima_$JOB_ID.out
-#$ -e logs/lima_$JOB_ID.err
+#$ -wd /home/skgtmdf/Scratch/bin/ophelia
+#$ -o logs/ophelia_$JOB_ID.out
+#$ -e logs/ophelia_$JOB_ID.err
 #$ -M michael.flower@ucl.ac.uk
 #$ -m bea
 
 # ==============================================================================
-# Lima Pipeline - Myriad Job Script
+# Ophelia - PacBio Demultiplexing Pipeline (Myriad Job Script)
 # ==============================================================================
 #
-# This script runs the Lima demultiplexing pipeline on UCL's Myriad cluster.
-# Edit the parameters in the ./lima command at the bottom.
+# This script runs the Ophelia demultiplexing pipeline on UCL's Myriad cluster.
+# Edit the parameters in the ./ophelia command at the bottom.
 #
 # Cluster: Myriad (UCL)
 # Scheduler: Grid Engine (SGE)
@@ -53,17 +53,17 @@
 #    source $UCL_CONDA_PATH/etc/profile.d/conda.sh
 #    conda create -n lima -c bioconda lima
 #
-# 2. Edit parameters in the ./lima command below
+# 2. Edit parameters in the ./ophelia command below
 #
 # 3. Submit the job:
-#    qsub scripts/lima_myriad.sh
+#    qsub scripts/ophelia_myriad.sh
 #
 # 4. Monitor the job:
 #    qstat -u $USER
 #    watch -n 30 'qstat -u $USER'
 #
 # 5. Check output:
-#    tail -f logs/lima_$JOB_ID.out
+#    tail -f logs/ophelia_$JOB_ID.out
 #
 # 6. Cancel job if needed:
 #    qdel <JOB_ID>
@@ -72,7 +72,7 @@
 
 # Print job info
 echo "=============================================="
-echo "Lima Pipeline - Myriad Job"
+echo "Ophelia - PacBio Demultiplexing Pipeline"
 echo "=============================================="
 echo "Job ID:       $JOB_ID"
 echo "Job Name:     $JOB_NAME"
@@ -97,35 +97,34 @@ echo "Conda env: $CONDA_DEFAULT_ENV"
 echo "Lima version: $(lima --version 2>&1 | head -1)"
 echo ""
 
-# Change to Lima root directory (parent of scripts/)
-cd ~/Scratch/bin/lima
+# Change to Ophelia root directory (parent of scripts/)
+cd ~/Scratch/bin/ophelia
 
 # ==============================================================================
 # EDIT PARAMETERS BELOW
 # ==============================================================================
 
-./lima \
+./ophelia \
     --dir_data /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/bam \
     --dir_out /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/results \
     --barcode_ref /home/skgtmdf/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
     --biosample_csv /home/skgtmdf/Scratch/refs/pacbio/biosample.csv \
     --threads $NSLOTS \
-    --resume TRUE \
-    --lima_args "--split-named --store-unbarcoded"
+    --resume TRUE
 
 # ==============================================================================
 # EXAMPLE CONFIGURATIONS
 # ==============================================================================
 
 # Basic demultiplexing (known barcodes):
-# ./lima \
+# ./ophelia \
 #     --dir_data ~/Scratch/data/my_experiment/bam \
 #     --dir_out ~/Scratch/data/my_experiment/demux \
 #     --barcode_ref ~/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
 #     --threads $NSLOTS
 
 # With barcode inference (unknown barcodes):
-# ./lima \
+# ./ophelia \
 #     --dir_data ~/Scratch/data/my_experiment/bam \
 #     --dir_out ~/Scratch/data/my_experiment/demux \
 #     --barcode_ref ~/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
@@ -133,7 +132,7 @@ cd ~/Scratch/bin/lima
 #     --lima_args "--split-named --store-unbarcoded --peek-guess"
 
 # Process only specific barcode files:
-# ./lima \
+# ./ophelia \
 #     --dir_data ~/Scratch/data/my_experiment/bam \
 #     --dir_out ~/Scratch/data/my_experiment/demux \
 #     --barcode_ref ~/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
@@ -141,7 +140,7 @@ cd ~/Scratch/bin/lima
 #     --threads $NSLOTS
 
 # Dry run (test without executing):
-# ./lima \
+# ./ophelia \
 #     --dir_data ~/Scratch/data/my_experiment/bam \
 #     --dir_out ~/Scratch/data/my_experiment/demux \
 #     --barcode_ref ~/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
@@ -153,6 +152,6 @@ cd ~/Scratch/bin/lima
 
 echo ""
 echo "=============================================="
-echo "Lima pipeline complete!"
+echo "Ophelia pipeline complete!"
 echo "Job finished: $(date)"
 echo "=============================================="

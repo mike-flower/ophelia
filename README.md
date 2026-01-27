@@ -1,4 +1,4 @@
-# Lima Pipeline
+# Ophelia
 
 A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio's lima tool.
 
@@ -9,13 +9,13 @@ A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio'
 ## Quick Start
 
 ```bash
-./lima --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
+./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
 ```
 
 With sample renaming:
 ```bash
-./lima --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta \
-       --biosample_csv ~/refs/biosample.csv
+./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta \
+          --biosample_csv ~/refs/biosample.csv
 ```
 
 ---
@@ -66,14 +66,13 @@ conda activate lima
 ### Pipeline Setup
 
 ```bash
-# Clone or copy the lima pipeline
-cd ~/Scratch/bin  # or wherever you keep tools
-# Copy lima directory here
+# Clone the ophelia pipeline
+cd ~/Scratch/bin
+git clone https://github.com/mike-flower/ophelia.git
+cd ophelia
 
-# Make executable
-chmod +x lima
-chmod +x scripts/lima_cli.sh
-chmod +x scripts/lima_myriad.sh
+# Verify it's executable (should be from git)
+./ophelia --help
 ```
 
 ---
@@ -137,11 +136,11 @@ bc1003--bc1050,bcp1-B01-bc1003--bc1050
 ## File Structure
 
 ```
-lima/
-├── lima                    # Main wrapper script
+ophelia/
+├── ophelia                   # Main wrapper script
 ├── scripts/
-│   ├── lima_cli.sh         # Core pipeline logic
-│   └── lima_myriad.sh      # HPC job submission script
+│   ├── ophelia_cli.sh        # Core pipeline logic
+│   └── ophelia_myriad.sh     # HPC job submission script
 └── README.md
 ```
 
@@ -153,33 +152,32 @@ lima/
 
 **Basic usage:**
 ```bash
-./lima --dir_data DIR --dir_out DIR --barcode_ref FILE [OPTIONS]
+./ophelia --dir_data DIR --dir_out DIR --barcode_ref FILE [OPTIONS]
 ```
 
 **Full example:**
 ```bash
-./lima \
+./ophelia \
     --dir_data /path/to/bam \
     --dir_out /path/to/results \
     --barcode_ref /path/to/barcodes.fasta \
     --biosample_csv /path/to/biosample.csv \
-    --threads 8 \
-    --lima_args "--split-named --store-unbarcoded"
+    --threads 8
 ```
 
 **View all options:**
 ```bash
-./lima --help
+./ophelia --help
 ```
 
 ### HPC Deployment
 
 #### Job Submission (Myriad)
 
-1. Edit parameters in `scripts/lima_myriad.sh`
+1. Edit parameters in `scripts/ophelia_myriad.sh`
 2. Submit the job:
    ```bash
-   qsub scripts/lima_myriad.sh
+   qsub scripts/ophelia_myriad.sh
    ```
 
 #### Monitoring Jobs
@@ -192,7 +190,7 @@ qstat -u $USER
 watch -n 30 'qstat -u $USER'
 
 # View live output
-tail -f logs/lima_$JOB_ID.out
+tail -f logs/ophelia_$JOB_ID.out
 
 # Cancel job
 qdel <JOB_ID>
@@ -266,9 +264,9 @@ dir_out/
 ├── demux_bc2002/
 │   └── ...
 ├── logs/
-│   ├── lima_20260127_143022.log               # Pipeline log
-│   └── lima_params_20260127_143022.txt        # Saved parameters
-└── lima_summary.txt                           # Overall summary
+│   ├── ophelia_20260127_143022.log            # Pipeline log
+│   └── ophelia_params_20260127_143022.txt     # Saved parameters
+└── ophelia_summary.txt                        # Overall summary
 ```
 
 ### Output Files
@@ -279,7 +277,7 @@ dir_out/
 | `*.lima.summary` | Summary statistics (ZMWs processed, passed, etc.) |
 | `*.lima.report` | Detailed per-read barcode assignments |
 | `*.lima.counts` | Read counts per barcode pair |
-| `lima_summary.txt` | Overall pipeline summary |
+| `ophelia_summary.txt` | Overall pipeline summary |
 
 ---
 
@@ -290,7 +288,7 @@ dir_out/
 When you know which barcode combinations are present:
 
 ```bash
-./lima \
+./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
@@ -301,7 +299,7 @@ When you know which barcode combinations are present:
 Files named by human-readable sample names instead of barcode pairs:
 
 ```bash
-./lima \
+./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
@@ -313,7 +311,7 @@ Files named by human-readable sample names instead of barcode pairs:
 When you don't know which barcode combinations are present (lima will infer):
 
 ```bash
-./lima \
+./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
@@ -325,7 +323,7 @@ When you don't know which barcode combinations are present (lima will infer):
 Process only certain barcode files:
 
 ```bash
-./lima \
+./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
@@ -337,7 +335,7 @@ Process only certain barcode files:
 See what would happen without actually running:
 
 ```bash
-./lima \
+./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
@@ -350,16 +348,16 @@ The resume feature skips completed files:
 
 ```bash
 # First run (some files fail)
-./lima --dir_data ~/data/bam --dir_out ~/results ...
+./ophelia --dir_data ~/data/bam --dir_out ~/results ...
 
 # Fix issues, then re-run (only processes failed files)
-./lima --dir_data ~/data/bam --dir_out ~/results ... --resume TRUE
+./ophelia --dir_data ~/data/bam --dir_out ~/results ... --resume TRUE
 ```
 
 To force re-processing of all files:
 
 ```bash
-./lima --dir_data ~/data/bam --dir_out ~/results ... --resume FALSE
+./ophelia --dir_data ~/data/bam --dir_out ~/results ... --resume FALSE
 ```
 
 ---
@@ -377,11 +375,11 @@ source $UCL_CONDA_PATH/etc/profile.d/conda.sh
 conda activate lima
 ```
 
-**"scripts/lima_cli.sh not found"**
+**"scripts/ophelia_cli.sh not found"**
 ```bash
-# Run from the lima root directory
-cd ~/Scratch/bin/lima
-./lima --help
+# Run from the ophelia root directory
+cd ~/Scratch/bin/ophelia
+./ophelia --help
 ```
 
 **"No BAM files found"**
@@ -390,7 +388,7 @@ cd ~/Scratch/bin/lima
 ls /path/to/data/*.bam
 
 # Try different pattern
-./lima --dir_data /path/to/data --file_pattern "*.hifi_reads.*.bam" ...
+./ophelia --dir_data /path/to/data --file_pattern "*.hifi_reads.*.bam" ...
 ```
 
 **"Biosample CSV parsing error"**
@@ -417,7 +415,7 @@ Common causes:
 
 **"Job killed on Myriad"**
 ```bash
-# Request more resources in lima_myriad.sh:
+# Request more resources in ophelia_myriad.sh:
 #$ -l h_rt=24:00:00    # More time
 #$ -pe smp 16          # More cores
 #$ -l mem=8G           # More memory per core
@@ -434,7 +432,7 @@ Common causes:
 | **Output naming** | By barcode pairs | By biosample name |
 | **BAM SM tag** | Barcode pair | Biosample name |
 
-**Don't combine `--peek-guess` with `--biosample_csv`** — use one or the other.
+**Note:** Don't combine `--peek-guess` with `--biosample_csv` — use one or the other.
 
 ---
 

@@ -1,9 +1,9 @@
 #!/bin/bash
 #===============================================================================
-# Lima Pipeline - Command Line Interface
+# Ophelia - PacBio Demultiplexing Pipeline
 #===============================================================================
 #
-# PacBio demultiplexing pipeline for HiFi amplicon sequencing data
+# A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
 # Processes all BAM files in a directory using PacBio's lima tool
 #
 # Author: Michael Flower
@@ -88,14 +88,14 @@ log_section() {
 
 show_help() {
     cat << 'EOF'
-Lima Pipeline - PacBio Demultiplexing
-=====================================
+Ophelia - PacBio Demultiplexing Pipeline
+========================================
 
-Demultiplex PacBio HiFi amplicon sequencing data using lima.
+A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data.
 Processes all BAM files in a directory sequentially.
 
 USAGE:
-    ./lima --dir_data DIR --dir_out DIR --barcode_ref FILE [OPTIONS]
+    ./ophelia --dir_data DIR --dir_out DIR --barcode_ref FILE [OPTIONS]
 
 REQUIRED ARGUMENTS:
     --dir_data DIR          Directory containing input BAM files
@@ -126,34 +126,34 @@ EXECUTION OPTIONS:
 EXAMPLES:
 
     # Basic demultiplexing (you know which barcodes are present)
-    ./lima \
+    ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
 
     # With sample renaming (files named by biosample)
-    ./lima \
+    ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
         --biosample_csv ~/refs/biosample.csv
 
     # Unknown barcodes (infer which are present)
-    ./lima \
+    ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
         --lima_args "--split-named --store-unbarcoded --peek-guess"
 
     # Process only bc200* files
-    ./lima \
+    ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
         --file_pattern "*bc200*.bam"
 
     # Dry run to see what would happen
-    ./lima \
+    ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
@@ -169,9 +169,9 @@ OUTPUT STRUCTURE:
     ├── demux_bc2002/
     │   └── ...
     ├── logs/
-    │   ├── lima_YYYYMMDD_HHMMSS.log
-    │   └── lima_params_YYYYMMDD_HHMMSS.txt
-    └── lima_summary.txt        # Overall summary
+    │   ├── ophelia_YYYYMMDD_HHMMSS.log
+    │   └── ophelia_params_YYYYMMDD_HHMMSS.txt
+    └── ophelia_summary.txt     # Overall summary
 
 NOTES:
     - Lima is internally parallelised, so files are processed sequentially
@@ -303,10 +303,12 @@ setup_environment() {
     if command -v micromamba &> /dev/null; then
         log_debug "Found micromamba"
         eval "$(micromamba shell hook --shell bash 2>/dev/null)" || true
-        if micromamba activate py2 2>/dev/null; then
+        if micromamba activate lima 2>/dev/null; then
+            log_debug "Activated lima environment (micromamba)"
+        elif micromamba activate py2 2>/dev/null; then
             log_debug "Activated py2 environment (micromamba)"
         else
-            log_debug "Could not activate py2, trying base environment"
+            log_debug "Could not activate environment, checking PATH"
         fi
     elif command -v conda &> /dev/null; then
         log_debug "Found conda"
@@ -317,12 +319,12 @@ setup_environment() {
             source "${CONDA_PREFIX}/etc/profile.d/conda.sh"
         fi
         eval "$(conda shell.bash hook 2>/dev/null)" || true
-        if conda activate py2 2>/dev/null; then
-            log_debug "Activated py2 environment (conda)"
-        elif conda activate lima 2>/dev/null; then
+        if conda activate lima 2>/dev/null; then
             log_debug "Activated lima environment (conda)"
+        elif conda activate py2 2>/dev/null; then
+            log_debug "Activated py2 environment (conda)"
         else
-            log_debug "Could not activate environment, assuming lima is in PATH"
+            log_debug "Could not activate environment, checking PATH"
         fi
     else
         log_debug "No conda/micromamba found, assuming lima is in PATH"
@@ -499,13 +501,13 @@ process_bam() {
 #===============================================================================
 
 generate_summary() {
-    local summary_file="${DIR_OUT}/lima_summary.txt"
+    local summary_file="${DIR_OUT}/ophelia_summary.txt"
 
     log_info "Generating summary..."
 
     {
-        echo "Lima Pipeline Summary"
-        echo "====================="
+        echo "Ophelia Pipeline Summary"
+        echo "========================"
         echo ""
         echo "Date: $(date)"
         echo "Lima version: ${LIMA_VERSION}"
@@ -560,13 +562,13 @@ generate_summary() {
 #===============================================================================
 
 save_parameters() {
-    local params_file="${DIR_OUT}/logs/lima_params_$(date +%Y%m%d_%H%M%S).txt"
+    local params_file="${DIR_OUT}/logs/ophelia_params_$(date +%Y%m%d_%H%M%S).txt"
 
     mkdir -p "${DIR_OUT}/logs"
 
     {
-        echo "Lima Pipeline Parameters"
-        echo "========================"
+        echo "Ophelia Pipeline Parameters"
+        echo "==========================="
         echo ""
         echo "Timestamp: $(date)"
         echo ""
@@ -605,7 +607,7 @@ main() {
     parse_args "$@"
 
     # Show banner
-    log_section "Lima Pipeline - PacBio Demultiplexing"
+    log_section "Ophelia - PacBio Demultiplexing Pipeline"
 
     # Validate
     validate_inputs
@@ -615,7 +617,7 @@ main() {
     mkdir -p "${DIR_OUT}/logs"
 
     # Setup logging
-    LOG_FILE="${DIR_OUT}/logs/lima_$(date +%Y%m%d_%H%M%S).log"
+    LOG_FILE="${DIR_OUT}/logs/ophelia_$(date +%Y%m%d_%H%M%S).log"
     exec > >(tee -a "${LOG_FILE}") 2>&1
 
     log_info "Log file: ${LOG_FILE}"

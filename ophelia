@@ -1,0 +1,31 @@
+#!/bin/bash
+#
+# Ophelia - PacBio Demultiplexing Pipeline
+#
+# A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
+#
+# Usage:
+#   ./ophelia --dir_data /path/to/bams --dir_out /path/to/results [options]
+#
+# Examples:
+#   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
+#   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --biosample_csv ~/refs/biosample.csv
+#   ./ophelia --help
+#
+
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Check if ophelia_cli.sh exists in scripts subdirectory
+if [ ! -f "$SCRIPT_DIR/scripts/ophelia_cli.sh" ]; then
+    echo "Error: scripts/ophelia_cli.sh not found in $SCRIPT_DIR"
+    echo "Expected directory structure:"
+    echo "  ophelia/"
+    echo "  ├── ophelia           (this wrapper)"
+    echo "  └── scripts/"
+    echo "      └── ophelia_cli.sh"
+    exit 1
+fi
+
+# Run the Ophelia CLI
+bash "$SCRIPT_DIR/scripts/ophelia_cli.sh" "$@"
