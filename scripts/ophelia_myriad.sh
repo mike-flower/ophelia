@@ -34,7 +34,7 @@ cd ~/Scratch/bin/ophelia
 ./ophelia \
     --dir_data /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/bam \
     --dir_out /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/results \
-    --barcode_ref /home/skgtmdf/Scratch/refs/pacbio/pacbio_M13_barcodes.fasta \
+    --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
     --threads $NSLOTS \
     --resume
 
