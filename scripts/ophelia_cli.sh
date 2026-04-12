@@ -8,7 +8,7 @@
 #
 # Author: Michael Flower
 # Institution: UCL Queen Square Institute of Neurology
-# Version: 1.0.1
+# Version: 1.0.2
 #
 #===============================================================================
 
@@ -26,6 +26,8 @@ OPHELIA_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 #===============================================================================
 # DEFAULTS
 #===============================================================================
+
+VERSION="1.0.2"
 
 # Required parameters (no defaults)
 DIR_DATA=""
@@ -46,16 +48,35 @@ DRY_RUN="FALSE"
 VERBOSE="FALSE"
 RESUME="TRUE"
 
+# Runtime globals (set during execution)
+LIMA_VERSION=""
+LOG_DIR=""
+LOG_FILE=""
+RUN_TIMESTAMP=""
+INPUT_FILES=()
+FAILED_FILES=()
+
 #===============================================================================
 # COLOUR OUTPUT
+# Colours are disabled automatically when stdout is not a TTY (e.g. in log
+# files or SGE job output), so the log file remains clean and grep-friendly.
 #===============================================================================
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    NC=''
+fi
 
 #===============================================================================
 # LOGGING
@@ -112,13 +133,13 @@ REQUIRED ARGUMENTS:
     --barcode_ref FILE      Reference barcode FASTA file
 
 OPTIONAL ARGUMENTS:
-    --biosample_csv FILE    BioSample CSV for sample naming (renames output files)
+    --biosample_csv FILE    BioSample CSV to override BAM SM tag (does not rename files)
     --file_pattern GLOB     Pattern to match BAM files (default: *.bam)
     --threads N             Number of threads (default: auto-detect)
 
 LIMA ARGUMENTS:
     --lima_preset PRESET    Lima HiFi preset (default: ASYMMETRIC)
-                            Options: ASYMMETRIC, SYMMETRIC, SYMMETRIC-ADAPTERS
+                            Options: ASYMMETRIC, SYMMETRIC, SYMMETRIC-ADAPTERS, TAILED
     --lima_args "ARGS"      Additional lima arguments (default: "--split-named --store-unbarcoded")
                             Common options:
                               --peek-guess        Infer which barcodes are present
@@ -127,7 +148,8 @@ LIMA ARGUMENTS:
                               --dump-removed      Save filtered reads
 
 EXECUTION OPTIONS:
-    --resume TRUE|FALSE     Skip already processed files (default: TRUE)
+    --resume                Skip already processed files (default: on)
+    --no-resume             Force re-processing of all files
     --dry_run               Show what would be run without executing
     --verbose               Enable verbose output
     --help                  Show this help message
@@ -140,7 +162,7 @@ EXAMPLES:
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
 
-    # With sample renaming (files named by biosample)
+    # With SM tag override (files still named by barcode pair)
     ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
@@ -170,17 +192,19 @@ EXAMPLES:
 
 OUTPUT STRUCTURE:
     dir_out/
-    ├── demux_bc2001/           # One folder per input BAM
-    │   ├── *.demux.*.bam       # Demultiplexed BAM files
-    │   ├── *.lima.summary      # Lima summary statistics
-    │   ├── *.lima.report       # Detailed lima report
-    │   └── *.lima.counts       # Read counts per barcode
-    ├── demux_bc2002/
+    ├── demux_m84277_...bc2001/     # One folder per input BAM (named by full input stem)
+    │   ├── *.demux.*.bam           # Demultiplexed BAM files
+    │   ├── *.lima.summary          # Lima summary statistics
+    │   ├── *.lima.report           # Detailed lima report
+    │   └── *.lima.counts           # Read counts per barcode
+    ├── demux_m84277_...bc2002/
     │   └── ...
-    ├── logs/
-    │   ├── ophelia_YYYYMMDD_HHMMSS.log
-    │   └── ophelia_params_YYYYMMDD_HHMMSS.txt
     └── ophelia_summary.txt     # Overall summary
+
+    Logs (in ophelia installation directory):
+    ophelia/logs/YYYYMMDD_HHMMSS/
+    ├── ophelia.log
+    └── ophelia_params.txt
 
 NOTES:
     - Lima is internally parallelised, so files are processed sequentially
@@ -231,8 +255,12 @@ parse_args() {
                 shift 2
                 ;;
             --resume)
-                RESUME="$2"
-                shift 2
+                RESUME="TRUE"
+                shift
+                ;;
+            --no-resume)
+                RESUME="FALSE"
+                shift
                 ;;
             --dry_run)
                 DRY_RUN="TRUE"
@@ -292,6 +320,27 @@ validate_inputs() {
         errors=$((errors + 1))
     fi
 
+    # Validate threads is a non-negative integer
+    if [[ -n "${THREADS}" && ! "${THREADS}" =~ ^[0-9]+$ ]]; then
+        log_error "--threads must be a positive integer, got: ${THREADS}"
+        errors=$((errors + 1))
+    fi
+
+    # Validate lima preset
+    local valid_presets=("ASYMMETRIC" "SYMMETRIC" "SYMMETRIC-ADAPTERS" "TAILED")
+    local preset_valid=false
+    for p in "${valid_presets[@]}"; do
+        if [[ "${LIMA_PRESET}" == "${p}" ]]; then
+            preset_valid=true
+            break
+        fi
+    done
+    if [[ "${preset_valid}" == "false" ]]; then
+        log_error "Invalid --lima_preset: ${LIMA_PRESET}"
+        log_error "Valid options: ${valid_presets[*]}"
+        errors=$((errors + 1))
+    fi
+
     if [[ ${errors} -gt 0 ]]; then
         echo ""
         echo "Use --help for usage information"
@@ -314,10 +363,8 @@ setup_environment() {
         eval "$(micromamba shell hook --shell bash 2>/dev/null)" || true
         if micromamba activate lima 2>/dev/null; then
             log_debug "Activated lima environment (micromamba)"
-        elif micromamba activate py2 2>/dev/null; then
-            log_debug "Activated py2 environment (micromamba)"
         else
-            log_debug "Could not activate environment, checking PATH"
+            log_debug "Could not activate lima environment via micromamba, checking PATH"
         fi
     elif command -v conda &> /dev/null; then
         log_debug "Found conda"
@@ -330,10 +377,8 @@ setup_environment() {
         eval "$(conda shell.bash hook 2>/dev/null)" || true
         if conda activate lima 2>/dev/null; then
             log_debug "Activated lima environment (conda)"
-        elif conda activate py2 2>/dev/null; then
-            log_debug "Activated py2 environment (conda)"
         else
-            log_debug "Could not activate environment, checking PATH"
+            log_debug "Could not activate lima environment via conda, checking PATH"
         fi
     else
         log_debug "No conda/micromamba found, assuming lima is in PATH"
@@ -369,13 +414,13 @@ preprocess_biosample_csv() {
 
     log_info "Checking biosample CSV..."
 
-    # Check for BOM character
+    # Check for BOM character and create a cleaned copy if found
+    # Uses perl for cross-platform compatibility (BSD sed does not support hex escapes)
     if head -c 3 "${BIOSAMPLE_CSV}" | grep -q $'\xef\xbb\xbf'; then
         log_warn "BOM character detected in biosample CSV"
 
-        # Create cleaned copy in output directory
         local cleaned_csv="${DIR_OUT}/biosample_cleaned.csv"
-        sed '1s/^\xEF\xBB\xBF//' "${BIOSAMPLE_CSV}" > "${cleaned_csv}"
+        perl -pe 's/^\xEF\xBB\xBF//' "${BIOSAMPLE_CSV}" > "${cleaned_csv}"
         log_info "Created BOM-stripped copy: ${cleaned_csv}"
         BIOSAMPLE_CSV="${cleaned_csv}"
     fi
@@ -426,16 +471,8 @@ process_bam() {
     local bam_name
     bam_name=$(basename "${input_bam}" .bam)
 
-    # Extract barcode suffix for output directory naming
-    local barcode_suffix
-    barcode_suffix=$(echo "${bam_name}" | grep -oE 'bc[0-9]+' | tail -1 || echo "")
-
     local output_subdir
-    if [[ -n "${barcode_suffix}" ]]; then
-        output_subdir="${DIR_OUT}/demux_${barcode_suffix}"
-    else
-        output_subdir="${DIR_OUT}/${bam_name}"
-    fi
+    output_subdir="${DIR_OUT}/demux_${bam_name}"
 
     local output_prefix="${bam_name}.demux"
     local output_bam="${output_subdir}/${output_prefix}.bam"
@@ -446,10 +483,11 @@ process_bam() {
     log_info "  Output: ${output_subdir}/"
 
     # Check if already processed (resume logic)
+    # Verifies the summary file exists and contains expected content (not just created/empty)
     if [[ "${RESUME}" == "TRUE" ]]; then
         local summary_file="${output_subdir}/${output_prefix}.lima.summary"
-        if [[ -f "${summary_file}" ]]; then
-            log_info "  Skipping (already processed, --resume TRUE)"
+        if [[ -f "${summary_file}" ]] && grep -q "ZMWs above all thresholds" "${summary_file}" 2>/dev/null; then
+            log_info "  Skipping (already processed, --resume)"
             return 0
         fi
     fi
@@ -500,7 +538,7 @@ process_bam() {
         fi
         return 0
     else
-        log_error "  ✗ Failed"
+        log_error "  ✗ Failed: ${bam_name}"
         return 1
     fi
 }
@@ -519,6 +557,7 @@ generate_summary() {
         echo "========================"
         echo ""
         echo "Date: $(date)"
+        echo "Version: ${VERSION}"
         echo "Lima version: ${LIMA_VERSION}"
         echo ""
         echo "Parameters:"
@@ -536,15 +575,8 @@ generate_summary() {
         for f in "${INPUT_FILES[@]}"; do
             local bam_name
             bam_name=$(basename "$f" .bam)
-            local barcode_suffix
-            barcode_suffix=$(echo "${bam_name}" | grep -oE 'bc[0-9]+' | tail -1 || echo "")
-
             local output_subdir
-            if [[ -n "${barcode_suffix}" ]]; then
-                output_subdir="${DIR_OUT}/demux_${barcode_suffix}"
-            else
-                output_subdir="${DIR_OUT}/${bam_name}"
-            fi
+            output_subdir="${DIR_OUT}/demux_${bam_name}"
 
             local summary="${output_subdir}/${bam_name}.demux.lima.summary"
             if [[ -f "${summary}" ]]; then
@@ -577,6 +609,7 @@ save_parameters() {
         echo "Ophelia Pipeline Parameters"
         echo "==========================="
         echo ""
+        echo "Version: ${VERSION}"
         echo "Timestamp: $(date)"
         echo "Log directory: ${LOG_DIR}"
         echo ""
@@ -615,23 +648,26 @@ main() {
     parse_args "$@"
 
     # Show banner
-    log_section "Ophelia - PacBio Demultiplexing Pipeline"
+    log_section "Ophelia v${VERSION} - PacBio Demultiplexing Pipeline"
 
-    # Validate
+    # Set up logging BEFORE validation so all output (including errors) is captured.
+    # Log dir is in the ophelia root, independent of DIR_OUT, so it can be created
+    # even if DIR_OUT hasn't been validated yet.
+    RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    LOG_DIR="${OPHELIA_ROOT}/logs/${RUN_TIMESTAMP}"
+    mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/ophelia.log"
+
+    # Redirect stdout/stderr: terminal sees ANSI colours, log file is plain text
+    exec > >(tee >(sed 's/\x1b\[[0-9;]*m//g' >> "${LOG_FILE}")) 2>&1
+
+    log_info "Log directory: ${LOG_DIR}"
+
+    # Validate inputs (errors now captured in log)
     validate_inputs
 
     # Create output directory
     mkdir -p "${DIR_OUT}"
-
-    # Setup logging in ophelia root directory with timestamped subdirectory
-    RUN_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    LOG_DIR="${OPHELIA_ROOT}/logs/${RUN_TIMESTAMP}"
-    mkdir -p "${LOG_DIR}"
-    
-    LOG_FILE="${LOG_DIR}/ophelia.log"
-    exec > >(tee -a "${LOG_FILE}") 2>&1
-
-    log_info "Log directory: ${LOG_DIR}"
     log_info "Output directory: ${DIR_OUT}"
 
     # Save parameters
@@ -651,12 +687,14 @@ main() {
 
     local failed=0
     local succeeded=0
+    FAILED_FILES=()
 
     for bam_file in "${INPUT_FILES[@]}"; do
         if process_bam "${bam_file}"; then
             succeeded=$((succeeded + 1))
         else
             failed=$((failed + 1))
+            FAILED_FILES+=("$(basename "${bam_file}")")
         fi
     done
 
@@ -682,7 +720,11 @@ main() {
     log_info "Logs:        ${LOG_DIR}"
 
     if [[ ${failed} -gt 0 ]]; then
-        log_warn "Some files failed to process. Check log for details."
+        log_warn "The following files failed to process:"
+        for f in "${FAILED_FILES[@]}"; do
+            log_warn "  - ${f}"
+        done
+        log_warn "Check log for details: ${LOG_FILE}"
         exit 1
     fi
 }

@@ -2,6 +2,7 @@
 *.tmp
 archive/
 scripts/archive/
+dev/
 .Rhistory
 .DS_Store
 
