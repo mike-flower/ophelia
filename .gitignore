@@ -4,5 +4,5 @@ archive/
 scripts/archive/
 dev/
 .Rhistory
-.DS_Store
+**/.DS_Store
 
