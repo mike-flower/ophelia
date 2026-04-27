@@ -181,7 +181,7 @@ This shows exactly what lima commands would be run, without touching any files.
 |----------|-------------|
 | `--split-named` | Name output files by barcode name (`bc1002--bc1050.bam`) rather than index (`0--12.bam`) — included by default |
 | `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode — included by default |
-| `--peek-guess` | Infer which barcodes are present (two-pass, slower) — use when you're unsure which barcode combinations are in your data |
+| `--peek-guess` | Restrict demux to barcodes detected in the first 50,000 reads (two-pass, slower). Reduces spurious low-count output BAMs and can infer unknown barcode sets — recommended for most runs |
 | `--dump-removed` | Save reads that were filtered out |
 
 ### Optional — execution
@@ -280,9 +280,11 @@ Use `--file_pattern` to restrict which BAMs are processed. For example, to proce
     --file_pattern "*bc200[1-2].bam"
 ```
 
-### 3. Unknown barcodes
+### 3. Filter spurious barcode pairs (recommended)
 
-If you're not sure which barcode combinations are present, use `--peek-guess`. Lima makes a first pass to infer which barcodes are present, then a second pass to assign reads. This is slower but more robust.
+By default, lima writes a separate output BAM for every barcode pair it scores above threshold, including low-count pairs from cross-talk, sequencing noise, or partial adapters. With a large barcode set this can balloon the output to hundreds of mostly-empty files per input BAM and exhaust disk quotas.
+
+`--peek-guess` runs lima in two passes: it scores the first 50,000 reads to identify which barcode pairs are actually present (mean score ≥ 45, ≥ 10 supporting reads), then demultiplexes the full file against only those pairs. The result is a cleaner, smaller output set with one BAM per real sample.
 
 ```bash
 ./ophelia \
@@ -291,6 +293,12 @@ If you're not sure which barcode combinations are present, use `--peek-guess`. L
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
     --lima_args "--split-named --store-unbarcoded --peek-guess"
 ```
+
+Use this:
+- For routine runs where you want clean output without spurious low-count BAMs (recommended)
+- When you're not sure which barcode combinations are present in your data
+
+The trade-off is runtime — `--peek-guess` is slower because lima reads the input twice.
 
 ### 4. Resume after interruption
 
@@ -407,6 +415,7 @@ cd ~/Scratch/bin/ophelia
     --dir_data /path/to/bam \
     --dir_out /path/to/results \
     --barcode_ref ~/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
+    --lima_args "--split-named --store-unbarcoded --peek-guess" \
     --threads $NSLOTS \
     --resume
 
@@ -500,7 +509,8 @@ cat results/demux_bc2001/*.lima.summary
 Common causes:
 - Wrong barcode reference file
 - Wrong `--lima_preset` — try `ASYMMETRIC` vs `SYMMETRIC`
-- Use `--peek-guess` to let lima infer which barcodes are actually present
+- Mixed-length barcodes in one FASTA — add `--different-barcode-lengths` to `--lima_args`
+- Use `--peek-guess` to restrict demux to barcodes actually detected in the data
 
 ### Biosample CSV sample names not appearing
 
@@ -530,6 +540,45 @@ grep -i "error\|failed" ~/Scratch/bin/ophelia/logs/20260127_143022/ophelia.log
 cat ~/Scratch/bin/ophelia/logs/20260127_143022/ophelia_params.txt
 ```
 
+### `Disk quota exceeded` or thousands of tiny output BAMs
+
+By default lima writes one output BAM per detected barcode pair. With a large or noisy barcode set this can produce thousands of mostly-empty files per input BAM, which exhausts both byte and inode quotas on shared filesystems (e.g. UCL Myriad Scratch).
+
+Two strategies:
+
+- **Use `--peek-guess`** (recommended): restricts output to the barcode pairs actually present in your data. See [Common workflow #3](#3-filter-spurious-barcode-pairs-recommended).
+- **On Myriad: stage output to node-local `$TMPDIR`** for runs against very large barcode sets, then `rsync` the final tree back to Scratch at the end of the job. This keeps the file count explosion off the quota-controlled filesystem entirely:
+
+  ```bash
+  WORK_OUT=$TMPDIR/result_demux
+  FINAL_OUT=/home/$USER/Scratch/data/my_run/result_demux
+  mkdir -p "$WORK_OUT" "$FINAL_OUT"
+
+  ./ophelia \
+      --dir_data /home/$USER/Scratch/data/my_run/bam \
+      --dir_out  "$WORK_OUT" \
+      --barcode_ref ~/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
+      --lima_args "--split-named --store-unbarcoded --peek-guess" \
+      --threads $NSLOTS \
+      --resume
+
+  rsync -a "$WORK_OUT/" "$FINAL_OUT/"
+  ```
+
+  Request enough `tmpfs` in your job header to hold the working output (`#$ -l tmpfs=200G` is comfortable for most runs).
+
+### Mixed barcode lengths
+
+If your barcode FASTA contains barcodes of different lengths (e.g. 16 bp M13 forward + 10 bp Kinnex reverse), lima needs an explicit flag to score them correctly:
+
+```bash
+./ophelia \
+    ... \
+    --lima_args "--split-named --store-unbarcoded --peek-guess --different-barcode-lengths"
+```
+
+Where possible, it's cleaner to split your input BAMs by barcode scheme and use a uniform-length reference for each subset rather than rely on `--different-barcode-lengths`.
+
 ### Job killed on Myriad
 
 Request more resources in your job script:
@@ -554,6 +603,12 @@ UCL Queen Square Institute of Neurology, London
 ---
 
 ## Version history
+
+### 1.0.3 (April 2026)
+- Documentation: clarified that `--peek-guess` is recommended for most runs, not just for unknown-barcode cases — its primary practical benefit is filtering spurious low-count output BAMs
+- Documentation: added troubleshooting entry for `Disk quota exceeded` and output-file-count explosion, including `$TMPDIR` staging pattern for Myriad
+- Documentation: added troubleshooting entry for mixed-length barcode FASTAs (`--different-barcode-lengths`)
+- Default Myriad job template now includes `--peek-guess` in the example `--lima_args`
 
 ### 1.0.2 (April 2026)
 - `--resume` is now a bare flag; `--no-resume` disables resume behaviour
