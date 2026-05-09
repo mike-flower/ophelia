@@ -36,7 +36,13 @@ cd ~/Scratch/bin/ophelia
     --dir_out /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/results \
     --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
     --threads $NSLOTS \
+    --reorganise \
     --resume
+    # Optional extras:
+    #   --drop-unbarcoded   # delete unbarcoded BAMs (irreversible; saves disk space)
+    #   --biosample_csv /path/to/biosample.csv
+    #   --file_pattern "*bc20*.bam"
+    #   --lima_args "--split-named --store-unbarcoded --peek-guess"
 
 # ==============================================================================
 

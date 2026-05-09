@@ -1,33 +1,37 @@
 #!/bin/bash
-#===============================================================================
+#==============================================================================
 # Ophelia - PacBio Demultiplexing Pipeline
-#===============================================================================
+#==============================================================================
 #
 # A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
 # Processes all BAM files in a directory using PacBio's lima tool
 #
 # Author: Michael Flower
 # Institution: UCL Queen Square Institute of Neurology
-# Version: 1.0.2
+# Version: 1.1.0
 #
-#===============================================================================
+#==============================================================================
 
 set -euo pipefail
 
-#===============================================================================
+#==============================================================================
 # SCRIPT DIRECTORY
-#===============================================================================
+#==============================================================================
 
 # Get the directory where this script is located (ophelia/scripts)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Get the root ophelia directory (parent of scripts/)
 OPHELIA_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 
-#===============================================================================
-# DEFAULTS
-#===============================================================================
+# Source shared reorganisation library (lives at the ophelia repo root, not under scripts/)
+# shellcheck source=../lib/reorganise.sh
+source "${OPHELIA_ROOT}/lib/reorganise.sh"
 
-VERSION="1.0.2"
+#==============================================================================
+# DEFAULTS
+#==============================================================================
+
+VERSION="1.1.0"
 
 # Required parameters (no defaults)
 DIR_DATA=""
@@ -37,11 +41,15 @@ BARCODE_REF=""
 # Optional parameters
 BIOSAMPLE_CSV=""
 FILE_PATTERN="*.bam"
-THREADS=0  # 0 = auto-detect
+THREADS=0   # 0 = auto-detect
 
 # Lima preset and arguments
 LIMA_PRESET="ASYMMETRIC"
 LIMA_ARGS="--split-named --store-unbarcoded"
+
+# Reorganisation options (off by default to preserve historical layout)
+REORGANISE="FALSE"
+DROP_UNBARCODED="FALSE"
 
 # Execution options
 DRY_RUN="FALSE"
@@ -56,11 +64,11 @@ RUN_TIMESTAMP=""
 INPUT_FILES=()
 FAILED_FILES=()
 
-#===============================================================================
+#==============================================================================
 # COLOUR OUTPUT
 # Colours are disabled automatically when stdout is not a TTY (e.g. in log
 # files or SGE job output), so the log file remains clean and grep-friendly.
-#===============================================================================
+#==============================================================================
 
 if [[ -t 1 ]]; then
     RED='\033[0;31m'
@@ -78,9 +86,9 @@ else
     NC=''
 fi
 
-#===============================================================================
+#==============================================================================
 # LOGGING
-#===============================================================================
+#==============================================================================
 
 timestamp() {
     date "+%Y-%m-%d %H:%M:%S"
@@ -106,15 +114,15 @@ log_debug() {
 
 log_section() {
     echo ""
-    echo -e "${CYAN}=================================================================${NC}"
+    echo -e "${CYAN}===============================================${NC}"
     echo -e "${CYAN}  $*${NC}"
-    echo -e "${CYAN}=================================================================${NC}"
+    echo -e "${CYAN}===============================================${NC}"
     echo ""
 }
 
-#===============================================================================
+#==============================================================================
 # USAGE
-#===============================================================================
+#==============================================================================
 
 show_help() {
     cat << 'EOF'
@@ -147,6 +155,12 @@ LIMA ARGUMENTS:
                               --store-unbarcoded  Keep unassigned reads
                               --dump-removed      Save filtered reads
 
+OUTPUT ORGANISATION:
+    --reorganise            Sort each sample's output into barcoded/, reports/,
+                            and unbarcoded/ subfolders (default: off)
+    --drop-unbarcoded       Delete unbarcoded BAMs instead of moving them
+                            (saves significant disk space; requires --reorganise)
+
 EXECUTION OPTIONS:
     --resume                Skip already processed files (default: on)
     --no-resume             Force re-processing of all files
@@ -161,6 +175,20 @@ EXAMPLES:
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
+
+    # With reorganised output layout (recommended for downstream pipelines)
+    ./ophelia \
+        --dir_data ~/data/bam \
+        --dir_out ~/results/demux \
+        --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+        --reorganise
+
+    # Reorganise and drop unbarcoded BAMs to save disk space
+    ./ophelia \
+        --dir_data ~/data/bam \
+        --dir_out ~/results/demux \
+        --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+        --reorganise --drop-unbarcoded
 
     # With SM tag override (files still named by barcode pair)
     ./ophelia \
@@ -191,15 +219,28 @@ EXAMPLES:
         --dry_run
 
 OUTPUT STRUCTURE:
-    dir_out/
-    ├── demux_m84277_...bc2001/     # One folder per input BAM (named by full input stem)
-    │   ├── *.demux.*.bam           # Demultiplexed BAM files
-    │   ├── *.lima.summary          # Lima summary statistics
-    │   ├── *.lima.report           # Detailed lima report
-    │   └── *.lima.counts           # Read counts per barcode
-    ├── demux_m84277_...bc2002/
-    │   └── ...
-    └── ophelia_summary.txt     # Overall summary
+
+    Without --reorganise (flat, default):
+        dir_out/
+        ├── demux_m84277_...bc2001/        # One folder per input BAM
+        │   ├── *.demux.<bc1>--<bc2>.bam   # Demultiplexed BAM files
+        │   ├── *.demux.unbarcoded.bam     # Unassigned reads
+        │   ├── *.lima.summary             # Lima summary statistics
+        │   ├── *.lima.report              # Detailed lima report
+        │   └── *.lima.counts              # Read counts per barcode
+        ├── demux_m84277_...bc2002/
+        │   └── ...
+        └── ophelia_summary.txt            # Overall summary
+
+    With --reorganise:
+        dir_out/
+        ├── demux_m84277_...bc2001/
+        │   ├── barcoded/                  # *.demux.<bc1>--<bc2>.{bam,bam.pbi,xml}
+        │   ├── reports/                   # *.lima.summary, *.lima.report, *.lima.counts
+        │   └── unbarcoded/                # *.demux.unbarcoded.* (omitted with --drop-unbarcoded)
+        ├── demux_m84277_...bc2002/
+        │   └── ...
+        └── ophelia_summary.txt
 
     Logs (in ophelia installation directory):
     ophelia/logs/YYYYMMDD_HHMMSS/
@@ -211,13 +252,17 @@ NOTES:
     - The biosample CSV should have format: Barcodes,Bio Sample
     - BOM characters in CSV files are automatically stripped
     - Requires lima from bioconda (conda install -c bioconda lima)
+    - --reorganise can be applied to existing output by re-running with
+      --resume (default); already-flat samples will be tidied without
+      re-running lima. For ad-hoc retrofitting of existing directories
+      without re-running ophelia, use scripts/reorganise_ophelia.sh
 
 EOF
 }
 
-#===============================================================================
+#==============================================================================
 # ARGUMENT PARSING
-#===============================================================================
+#==============================================================================
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -254,6 +299,18 @@ parse_args() {
                 LIMA_ARGS="$2"
                 shift 2
                 ;;
+            --reorganise|--reorganize)
+                REORGANISE="TRUE"
+                shift
+                ;;
+            --no-reorganise|--no-reorganize)
+                REORGANISE="FALSE"
+                shift
+                ;;
+            --drop-unbarcoded)
+                DROP_UNBARCODED="TRUE"
+                shift
+                ;;
             --resume)
                 RESUME="TRUE"
                 shift
@@ -283,9 +340,9 @@ parse_args() {
     done
 }
 
-#===============================================================================
+#==============================================================================
 # VALIDATION
-#===============================================================================
+#==============================================================================
 
 validate_inputs() {
     local errors=0
@@ -341,6 +398,12 @@ validate_inputs() {
         errors=$((errors + 1))
     fi
 
+    # --drop-unbarcoded requires --reorganise (it operates on the unbarcoded subdir)
+    if [[ "${DROP_UNBARCODED}" == "TRUE" && "${REORGANISE}" != "TRUE" ]]; then
+        log_error "--drop-unbarcoded requires --reorganise to be enabled"
+        errors=$((errors + 1))
+    fi
+
     if [[ ${errors} -gt 0 ]]; then
         echo ""
         echo "Use --help for usage information"
@@ -350,9 +413,9 @@ validate_inputs() {
     log_info "Validation complete"
 }
 
-#===============================================================================
+#==============================================================================
 # ENVIRONMENT SETUP
-#===============================================================================
+#==============================================================================
 
 setup_environment() {
     log_info "Setting up environment..."
@@ -403,9 +466,9 @@ setup_environment() {
     log_info "Using lima: ${LIMA_VERSION}"
 }
 
-#===============================================================================
+#==============================================================================
 # BIOSAMPLE CSV PREPROCESSING
-#===============================================================================
+#==============================================================================
 
 preprocess_biosample_csv() {
     if [[ -z "${BIOSAMPLE_CSV}" ]]; then
@@ -439,9 +502,9 @@ preprocess_biosample_csv() {
     log_info "Biosample CSV contains ${entries} entries"
 }
 
-#===============================================================================
+#==============================================================================
 # FIND INPUT FILES
-#===============================================================================
+#==============================================================================
 
 find_input_files() {
     log_info "Searching for BAM files matching: ${FILE_PATTERN}"
@@ -462,9 +525,39 @@ find_input_files() {
     done
 }
 
-#===============================================================================
+#==============================================================================
+# REORGANISE WRAPPER
+# Calls the shared library function and logs the result.
+#==============================================================================
+
+reorganise_with_logging() {
+    local sample_dir="$1"
+    local label="${2:-Reorganised}"
+
+    local drop_flag=0
+    [[ "${DROP_UNBARCODED}" == "TRUE" ]] && drop_flag=1
+
+    local dry_flag=0
+    [[ "${DRY_RUN}" == "TRUE" ]] && dry_flag=1
+
+    if reorganise_sample_dir "${sample_dir}" "${drop_flag}" "${dry_flag}"; then
+        # Only log if at least one file was touched
+        local total=$((REORG_BARCODED + REORG_REPORTS + REORG_UNBARCODED + REORG_DROPPED))
+        if [[ ${total} -gt 0 ]]; then
+            local msg="  ${label}: barcoded=${REORG_BARCODED}, reports=${REORG_REPORTS}, unbarcoded=${REORG_UNBARCODED}"
+            if [[ "${DROP_UNBARCODED}" == "TRUE" ]]; then
+                msg="${msg}, dropped=${REORG_DROPPED}"
+            fi
+            log_info "${msg}"
+        fi
+    else
+        log_debug "  Reorganise skipped (no sample dir): ${sample_dir}"
+    fi
+}
+
+#==============================================================================
 # PROCESS SINGLE BAM FILE
-#===============================================================================
+#==============================================================================
 
 process_bam() {
     local input_bam="$1"
@@ -482,12 +575,17 @@ process_bam() {
     log_info "  Input:  ${input_bam}"
     log_info "  Output: ${output_subdir}/"
 
-    # Check if already processed (resume logic)
-    # Verifies the summary file exists and contains expected content (not just created/empty)
+    # Check if already processed (resume logic). Layout-aware: looks for the
+    # summary file in either the flat or reorganised location.
     if [[ "${RESUME}" == "TRUE" ]]; then
-        local summary_file="${output_subdir}/${output_prefix}.lima.summary"
-        if [[ -f "${summary_file}" ]] && grep -q "ZMWs above all thresholds" "${summary_file}" 2>/dev/null; then
+        local summary_file
+        summary_file=$(locate_summary_file "${output_subdir}" "${output_prefix}")
+        if [[ -n "${summary_file}" ]] && grep -q "ZMWs above all thresholds" "${summary_file}" 2>/dev/null; then
             log_info "  Skipping (already processed, --resume)"
+            # If layout is flat but reorganise is requested, tidy up now.
+            if [[ "${REORGANISE}" == "TRUE" && "${summary_file}" == "${output_subdir}/${output_prefix}.lima.summary" ]]; then
+                reorganise_with_logging "${output_subdir}" "Reorganised (resume)"
+            fi
             return 0
         fi
     fi
@@ -521,6 +619,9 @@ process_bam() {
     # Execute or dry run
     if [[ "${DRY_RUN}" == "TRUE" ]]; then
         log_info "  [DRY RUN] Would execute: ${lima_cmd[*]}"
+        if [[ "${REORGANISE}" == "TRUE" ]]; then
+            log_info "  [DRY RUN] Would then reorganise output into barcoded/reports/unbarcoded/"
+        fi
         return 0
     fi
 
@@ -528,7 +629,7 @@ process_bam() {
     if "${lima_cmd[@]}"; then
         log_info "  ✓ Complete"
 
-        # Report summary statistics
+        # Report summary statistics (look in flat location since lima just wrote there)
         local summary_file="${output_subdir}/${output_prefix}.lima.summary"
         if [[ -f "${summary_file}" ]]; then
             local zmw_input zmw_pass
@@ -536,6 +637,12 @@ process_bam() {
             zmw_pass=$(grep "^ZMWs above all thresholds" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
             log_info "  Stats: ${zmw_pass}/${zmw_input} reads passed filters"
         fi
+
+        # Reorganise this sample's output if requested
+        if [[ "${REORGANISE}" == "TRUE" ]]; then
+            reorganise_with_logging "${output_subdir}" "Reorganised"
+        fi
+
         return 0
     else
         log_error "  ✗ Failed: ${bam_name}"
@@ -543,9 +650,9 @@ process_bam() {
     fi
 }
 
-#===============================================================================
+#==============================================================================
 # GENERATE SUMMARY
-#===============================================================================
+#==============================================================================
 
 generate_summary() {
     local summary_file="${DIR_OUT}/ophelia_summary.txt"
@@ -561,12 +668,14 @@ generate_summary() {
         echo "Lima version: ${LIMA_VERSION}"
         echo ""
         echo "Parameters:"
-        echo "  dir_data:      ${DIR_DATA}"
-        echo "  dir_out:       ${DIR_OUT}"
-        echo "  barcode_ref:   ${BARCODE_REF}"
-        echo "  biosample_csv: ${BIOSAMPLE_CSV:-none}"
-        echo "  lima_preset:   ${LIMA_PRESET}"
-        echo "  lima_args:     ${LIMA_ARGS}"
+        echo "  dir_data:        ${DIR_DATA}"
+        echo "  dir_out:         ${DIR_OUT}"
+        echo "  barcode_ref:     ${BARCODE_REF}"
+        echo "  biosample_csv:   ${BIOSAMPLE_CSV:-none}"
+        echo "  lima_preset:     ${LIMA_PRESET}"
+        echo "  lima_args:       ${LIMA_ARGS}"
+        echo "  reorganise:      ${REORGANISE}"
+        echo "  drop_unbarcoded: ${DROP_UNBARCODED}"
         echo ""
         echo "Files processed: ${#INPUT_FILES[@]}"
         echo ""
@@ -578,8 +687,10 @@ generate_summary() {
             local output_subdir
             output_subdir="${DIR_OUT}/demux_${bam_name}"
 
-            local summary="${output_subdir}/${bam_name}.demux.lima.summary"
-            if [[ -f "${summary}" ]]; then
+            # Layout-aware lookup for the summary file
+            local summary
+            summary=$(locate_summary_file "${output_subdir}" "${bam_name}.demux")
+            if [[ -n "${summary}" ]]; then
                 local zmw_input zmw_pass pct
                 zmw_input=$(grep "^ZMWs input" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
                 zmw_pass=$(grep "^ZMWs above all thresholds" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
@@ -598,9 +709,9 @@ generate_summary() {
     log_info "Summary written to: ${summary_file}"
 }
 
-#===============================================================================
+#==============================================================================
 # SAVE PARAMETERS
-#===============================================================================
+#==============================================================================
 
 save_parameters() {
     local params_file="${LOG_DIR}/ophelia_params.txt"
@@ -627,6 +738,10 @@ save_parameters() {
         echo "lima_preset=${LIMA_PRESET}"
         echo "lima_args=${LIMA_ARGS}"
         echo ""
+        echo "# Output organisation"
+        echo "reorganise=${REORGANISE}"
+        echo "drop_unbarcoded=${DROP_UNBARCODED}"
+        echo ""
         echo "# Execution"
         echo "resume=${RESUME}"
         echo "dry_run=${DRY_RUN}"
@@ -636,9 +751,9 @@ save_parameters() {
     log_info "Parameters saved to: ${params_file}"
 }
 
-#===============================================================================
+#==============================================================================
 # MAIN
-#===============================================================================
+#==============================================================================
 
 main() {
     local start_time
@@ -669,6 +784,14 @@ main() {
     # Create output directory
     mkdir -p "${DIR_OUT}"
     log_info "Output directory: ${DIR_OUT}"
+
+    if [[ "${REORGANISE}" == "TRUE" ]]; then
+        if [[ "${DROP_UNBARCODED}" == "TRUE" ]]; then
+            log_info "Output layout: reorganised (unbarcoded files will be DELETED)"
+        else
+            log_info "Output layout: reorganised (barcoded/, reports/, unbarcoded/)"
+        fi
+    fi
 
     # Save parameters
     save_parameters

@@ -4,13 +4,14 @@
 #
 # A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
 #
-# Version: 1.0.2
+# Version: 1.1.0
 #
 # Usage:
 #   ./ophelia --dir_data /path/to/bams --dir_out /path/to/results [options]
 #
 # Examples:
 #   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
+#   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --reorganise
 #   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --biosample_csv ~/refs/biosample.csv
 #   ./ophelia --help
 #
@@ -18,14 +19,28 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Check if ophelia_cli.sh exists in scripts subdirectory
-if [ ! -f "$SCRIPT_DIR/scripts/ophelia_cli.sh" ]; then
-    echo "Error: scripts/ophelia_cli.sh not found in $SCRIPT_DIR"
+# Verify the expected files are present. ophelia_cli.sh sources lib/reorganise.sh
+# at startup, so both must exist or it will fail with a cryptic source error.
+missing=()
+[ -f "$SCRIPT_DIR/scripts/ophelia_cli.sh" ] || missing+=("scripts/ophelia_cli.sh")
+[ -f "$SCRIPT_DIR/lib/reorganise.sh" ]     || missing+=("lib/reorganise.sh")
+
+if [ ${#missing[@]} -gt 0 ]; then
+    echo "Error: missing required file(s) in $SCRIPT_DIR:"
+    for f in "${missing[@]}"; do
+        echo "  - $f"
+    done
+    echo ""
     echo "Expected directory structure:"
     echo "  ophelia/"
-    echo "  ├── ophelia           (this wrapper)"
-    echo "  └── scripts/"
-    echo "      └── ophelia_cli.sh"
+    echo "  ├── ophelia              (this wrapper)"
+    echo "  ├── scripts/"
+    echo "  │   └── ophelia_cli.sh"
+    echo "  └── lib/"
+    echo "      └── reorganise.sh"
+    echo ""
+    echo "If you've recently updated, ensure your checkout is current:"
+    echo "  cd $SCRIPT_DIR && git pull"
     exit 1
 fi
 
