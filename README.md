@@ -32,6 +32,7 @@ For a tidier output layout, add `--reorganise` to sort each sample's files into 
 - [Parameters](#parameters)
 - [Output structure](#output-structure)
 - [Output reorganisation](#output-reorganisation)
+- [Lima reference](#lima-reference)
 - [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
 
@@ -351,14 +352,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 | `--lima_preset` | `ASYMMETRIC` | Barcode preset (`ASYMMETRIC`, `SYMMETRIC`, `TAILED`) |
 | `--lima_args` | `--split-named --store-unbarcoded` | Additional arguments passed to lima |
 
-**Common lima argument additions:**
-
-| Argument | Description |
-| --- | --- |
-| `--split-named` | Name output files by barcode names (`bc1002--bc1050.bam`) instead of indices (`0--12.bam`) |
-| `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode |
-| `--peek-guess` | Infer which barcodes are present (slower, two-pass) |
-| `--dump-removed` | Save reads that were filtered out |
+See the [Lima reference](#lima-reference) section for what each preset expands to, the meaning of `--peek-guess`, window-size guidance, and other commonly used flags.
 
 ### Output organisation
 
@@ -514,6 +508,88 @@ scripts/reorganise_ophelia.sh --path /path/to/result_ophelia --drop-unbarcoded
 ```
 
 Both the integrated `--reorganise` flag and the standalone script use the same classification logic (in `scripts/lib/reorganise.sh`), so the resulting layout is identical.
+
+---
+
+## Lima reference
+
+Ophelia is a thin wrapper around lima – any lima option can be passed through using `--lima_args "…"`. The full option list is available via `lima --help` once you've activated the conda environment. The notes below cover the lima details that most often affect Ophelia users' decisions.
+
+### HiFi presets
+
+`--lima_preset` selects a bundled set of lima parameters tuned for HiFi data. The actual flags each preset expands to are:
+
+| Preset | Equivalent lima flags |
+| --- | --- |
+| `SYMMETRIC` | `--ccs --min-score 0 --min-end-score 80 --min-ref-span 0.75 --same --single-end` |
+| `SYMMETRIC-ADAPTERS` | `--ccs --min-score 0 --min-end-score 80 --min-ref-span 0.75 --same --ignore-missing-adapters --single-end` |
+| `ASYMMETRIC` | `--ccs --min-score 80 --min-end-score 50 --min-ref-span 0.75 --different --min-scoring-regions 2` |
+| `TAILED` | (lima's tailed-amplicon recommended settings) |
+
+Use `ASYMMETRIC` for designs where forward and reverse primers carry different barcodes (most amplicon pooling, including Kinnex 16S). Use `SYMMETRIC` for designs where the same barcode appears on both ends.
+
+### `--peek-guess` and barcode inference
+
+`--peek-guess` is the easy way to handle the case "I don't know which barcodes are present in this pool". Lima demultiplexes the first batch of ZMWs, then keeps only the barcodes whose mean score exceeds a threshold. The exact thresholds depend on what other flags are active:
+
+| Mode | Equivalent flags |
+| --- | --- |
+| Default | `--peek 50000 --guess 45 --guess-min-count 10` |
+| With `--ccs` | `--peek 50000 --guess 75 --guess-min-count 10` |
+| With `--isoseq` | `--peek 50000 --guess 75 --guess-min-count 100` |
+
+Since the HiFi presets all enable `--ccs` internally, `--peek-guess` in Ophelia uses the higher score threshold (75) and a 10-ZMW minimum count.
+
+A practical pitfall: if your barcode FASTA contains barcodes you didn't actually use, `--peek-guess` will sometimes whitelist a few of them on the basis of stray matches. If you see anomalous barcode pairs in the output (e.g., R-R combinations in an asymmetric demux), check `*.lima.guess` in `reports/` to see which barcodes were inferred, then trim the FASTA to only the barcodes you actually pooled.
+
+### Window size
+
+The "window size" is how far in from each read end lima searches for barcodes. Two flags control it (default behaviour: use the multiplier):
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--window-size-multi N` | Window size = `N × barcode_length` | `3` (i.e., 48bp for a 16bp barcode) |
+| `--window-size N` | Explicit window size in bp; overrides the multiplier | `0` (use multiplier) |
+
+**Note on flag naming:** lima 2.13's binary uses `--window-size` (bp) and `--window-size-multi` (multiplier). The lima.how web docs show `--window-size-bp` and `--window-size-mult` – these names refer to older or newer versions of the binary. Always check `lima --help` against your installed version.
+
+For most standard PacBio barcode pools, the default window (3 × barcode length) is fine. You may want to enlarge the window when:
+
+- The library design includes a **pad or spacer between the adapter and the barcode** (e.g., a 5bp `GGTAG` pad outside a 16bp asymmetric barcode pushes the barcode further from the read end – the default 48bp window can be borderline if there's also residual adapter sequence)
+- Reads have **longer-than-usual residual adapter** for any other reason
+- You're seeing unexpectedly low pass rates with no obvious other cause
+
+For a 16bp barcode with a ~5bp pad, `--window-size 100` is a comfortable choice that adds enough headroom without meaningful CPU cost (the amplicon insert is far too long for a 100bp window to risk false-positive barcode hits in the middle).
+
+### Other useful flags
+
+These come up often enough to be worth knowing about, even though they're documented in `lima --help`:
+
+| Flag | Use |
+| --- | --- |
+| `--split-named` | Name output files by barcode names rather than indices (Ophelia uses this by default) |
+| `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode (Ophelia uses this by default; pair with `--drop-unbarcoded` after QC to reclaim disk space) |
+| `--peek-guess` | Infer which barcodes are present (slower; two-pass) |
+| `--dump-removed` | Save reads filtered out by quality thresholds (not just unbarcoded) |
+| `--min-score N` | Override the preset's minimum barcode score (lower = more permissive) |
+| `--min-passes N` | Require N full passes through the SMRTbell (default 0; rarely needed for HiFi) |
+| `--num-threads N` | Threads (Ophelia sets this from `--threads`, no need to pass directly) |
+
+### Quick reference – passing args through Ophelia
+
+Anything that doesn't have a dedicated Ophelia flag goes inside `--lima_args`:
+
+```bash
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results \
+    --barcode_ref ~/refs/barcodes.fasta \
+    --lima_preset ASYMMETRIC \
+    --lima_args "--split-named --store-unbarcoded --peek-guess --window-size 100" \
+    --reorganise
+```
+
+Ophelia explicitly handles `--biosample-csv` (via `--biosample_csv`), `--num-threads` (via `--threads`), and `--hifi-preset` (via `--lima_preset`) – passing these inside `--lima_args` will cause a duplicate-flag error from lima. Everything else is fair game.
 
 ---
 
