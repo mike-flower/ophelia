@@ -2,7 +2,7 @@
 
 A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio's lima tool.
 
-**Version 1.1.0**
+**Version 1.1.1**
 
 ---
 
@@ -150,7 +150,7 @@ To check the SM tag:
 ```bash
 samtools view -H output.bam | grep "^@RG"
 # Without biosample_csv: SM:lib_05 (from sequencing setup)
-# With biosample_csv:    SM:bcp1-A01-bc1002--bc1050
+# With biosample_csv: SM:bcp1-A01-bc1002--bc1050
 ```
 
 **Note on BOM characters:** The pipeline automatically strips UTF-8 BOM (Byte Order Mark) characters from CSV files. BOM is an invisible character (`EF BB BF` in hex) that Microsoft Excel adds to CSV files. Ophelia detects this and creates a cleaned copy automatically.
@@ -161,19 +161,19 @@ samtools view -H output.bam | grep "^@RG"
 
 ```
 ophelia/
-├── ophelia                      # Main wrapper script
+├── ophelia                        # Main wrapper script
 ├── scripts/
-│   ├── ophelia_cli.sh           # Core pipeline logic
-│   ├── ophelia_myriad.sh        # HPC job submission script
-│   └── reorganise_ophelia.sh    # Standalone tool for retrofitting existing output
+│   ├── ophelia_cli.sh             # Core pipeline logic
+│   ├── ophelia_myriad.sh          # HPC job submission script
+│   └── reorganise_ophelia.sh      # Standalone tool for retrofitting existing output
 ├── lib/
-│   └── reorganise.sh            # Shared reorganisation library
-├── logs/                        # Pipeline logs (created automatically)
-│   ├── 20260127_143022/         # Timestamped run directories
+│   └── reorganise.sh              # Shared reorganisation library
+├── logs/                          # Pipeline logs (created automatically)
+│   ├── 20260127_143022/           # Timestamped run directories
 │   │   ├── ophelia.log
 │   │   └── ophelia_params.txt
 │   └── ...
-├── www/                         # Reference files (barcodes, biosample CSV)
+├── www/                           # Reference files (barcodes, biosample CSV)
 └── README.md
 ```
 
@@ -246,7 +246,7 @@ mkdir -p logs
 
    ```bash
    cp scripts/ophelia_myriad.sh scripts/ophelia_myriad_myrun.sh
-   nano scripts/ophelia_myriad_myrun.sh  # Edit parameters
+   nano scripts/ophelia_myriad_myrun.sh   # Edit parameters
    ```
 
 2. **Important:** Ensure the logs directory exists (SGE creates log files before the script runs):
@@ -352,7 +352,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 | `--lima_preset` | `ASYMMETRIC` | Barcode preset (`ASYMMETRIC`, `SYMMETRIC`, `TAILED`) |
 | `--lima_args` | `--split-named --store-unbarcoded` | Additional arguments passed to lima |
 
-See the [Lima reference](#lima-reference) section for what each preset expands to, the meaning of `--peek-guess`, window-size guidance, and other commonly used flags.
+See the [Lima reference](#lima-reference) section for what each preset expands to, the meaning of `--peek-guess`, window-size guidance, the minimum read length, and other commonly used flags.
 
 ### Output organisation
 
@@ -378,9 +378,9 @@ See the [Lima reference](#lima-reference) section for what each preset expands t
 
 ```
 ophelia/logs/
-├── 20260127_143022/                           # Timestamped run directory
-│   ├── ophelia.log                            # Full pipeline log
-│   └── ophelia_params.txt                     # Parameters used
+├── 20260127_143022/               # Timestamped run directory
+│   ├── ophelia.log                # Full pipeline log
+│   └── ophelia_params.txt         # Parameters used
 ├── 20260127_160045/
 │   ├── ophelia.log
 │   └── ophelia_params.txt
@@ -433,7 +433,7 @@ dir_out/
 | --- | --- |
 | `*.demux.<bc1>--<bc2>.bam` | Demultiplexed BAM files (one per barcode pair) |
 | `*.demux.unbarcoded.bam` | Reads that couldn't be assigned to a barcode pair |
-| `*.lima.summary` | Summary statistics (ZMWs processed, passed, etc.) |
+| `*.lima.summary` | Summary statistics (reads processed, passed, etc.) |
 | `*.lima.report` | Detailed per-read barcode assignments |
 | `*.lima.counts` | Read counts per barcode pair |
 | `ophelia_summary.txt` | Overall demux summary (pass rates per file) |
@@ -507,7 +507,7 @@ scripts/reorganise_ophelia.sh \
 scripts/reorganise_ophelia.sh --path /path/to/result_ophelia --drop-unbarcoded
 ```
 
-Both the integrated `--reorganise` flag and the standalone script use the same classification logic (in `scripts/lib/reorganise.sh`), so the resulting layout is identical.
+Both the integrated `--reorganise` flag and the standalone script use the same classification logic (in `lib/reorganise.sh`), so the resulting layout is identical.
 
 ---
 
@@ -561,6 +561,80 @@ For most standard PacBio barcode pools, the default window (3 × barcode length)
 
 For a 16bp barcode with a ~5bp pad, `--window-size 100` is a comfortable choice that adds enough headroom without meaningful CPU cost (the amplicon insert is far too long for a 100bp window to risk false-positive barcode hits in the middle).
 
+### Minimum read length
+
+`--min-length` sets the minimum sequence length (after barcode clipping) for a read to be retained. Lima's default is **50 bp** and you'll rarely want to change it.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--min-length N` | `50` | Minimum read length in bp after clipping |
+
+To check the default in your installed lima version:
+
+```bash
+lima --help 2>&1 | grep -E "min-length"
+# -l,--min-length INT    Minimum sequence length after clipping. [50]
+```
+
+To override it via Ophelia, add it to `--lima_args`:
+
+```bash
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results \
+    --barcode_ref ~/refs/barcodes.fasta \
+    --lima_args "--split-named --store-unbarcoded --min-length 30"
+```
+
+#### When to lower it (usually: don't)
+
+Each amplicon has a **physical length floor** defined by the fixed flanking sequence – adapter handles, barcodes, and primers. Lowering `--min-length` below that floor never recovers usable reads; it just retains junk that fails downstream filters anyway.
+
+To work out the floor for your design, sum:
+
+```
+[adapter handle][barcode][primer F][insert][primer R RC][barcode RC][adapter handle RC]
+```
+
+For a Kinnex 16S library with 22 bp Kinnex/Iso-Seq handles, 10 bp kxF/kxR barcodes, and 22 bp HTT Ciosi primers, the fixed flanks alone total **108 bp**. A meaningful amplicon is at least ~130–140 bp (108 bp flanks + ~30 bp shortest plausible insert). Anything below ~100 bp is adapter dimer, primer dimer, or fragmentation artefact, and can't physically contain a full barcode pair – lima will reject these regardless of `--min-length`.
+
+The default of 50 bp is below the physical floor for almost every realistic PacBio amplicon design, so lowering it is rarely productive.
+
+#### Interpreting "Below min length" in lima.summary
+
+Lima's failure categories in `lima.summary` **are not mutually exclusive** – a single rejected read can be counted in multiple "Below ..." rows. For example:
+
+```
+Reads input                    : 30883297
+Reads above all thresholds (A) : 16275054
+Reads below any threshold  (B) : 14608243
+
+Read marginals for (B):
+Below min length               : 10158140
+Below min score                : 4319974
+Below min end score            : 1696109
+Below min score lead           : 10335876
+...
+```
+
+The marginal counts sum to ~28M, but only 14.6M unique reads failed. Most reads that fail "min length" also fail "min score lead" and other thresholds. So a large "Below min length" number doesn't necessarily mean a large pool of recoverable reads – it usually means the short-read population is broadly poor-quality.
+
+#### How to decide whether to lower it
+
+If lowering `--min-length` is genuinely on the table, check the length distribution of unbarcoded reads first:
+
+```bash
+# Length distribution of rejected reads (binned in 20bp intervals)
+samtools view demux_*/unbarcoded/*.unbarcoded.bam | awk '{ print length($10) }' | \
+    awk '{ bin = int($1/20)*20; n[bin]++ } END { for (b in n) printf "%4d\t%d\n", b, n[b] }' | \
+    sort -n
+```
+
+- If the rejected reads are concentrated **below ~100 bp** with a long tail of sub-50 bp reads, they're junk – lowering won't help.
+- If you see a substantial population at **130–250 bp** being rejected, that's where the recoverable yield lives. The right `--min-length` is the lower bound of that population (not zero).
+
+In most cases the bigger lever for recovering yield is **using `--biosample_csv` to constrain lima to the valid barcode pairs in your design** – this both eliminates false-positive pairs and improves `score-lead` calls on legitimate reads. Threshold tweaking is a second-order optimisation.
+
 ### Other useful flags
 
 These come up often enough to be worth knowing about, even though they're documented in `lima --help`:
@@ -571,7 +645,9 @@ These come up often enough to be worth knowing about, even though they're docume
 | `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode (Ophelia uses this by default; pair with `--drop-unbarcoded` after QC to reclaim disk space) |
 | `--peek-guess` | Infer which barcodes are present (slower; two-pass) |
 | `--dump-removed` | Save reads filtered out by quality thresholds (not just unbarcoded) |
+| `--min-length N` | Override the default minimum read length after clipping (default 50; see [Minimum read length](#minimum-read-length) above) |
 | `--min-score N` | Override the preset's minimum barcode score (lower = more permissive) |
+| `--min-score-lead N` | Minimum score margin between best and second-best barcode call (lower = more permissive) |
 | `--min-passes N` | Require N full passes through the SMRTbell (default 0; rarely needed for HiFi) |
 | `--num-threads N` | Threads (Ophelia sets this from `--threads`, no need to pass directly) |
 
@@ -758,6 +834,19 @@ head -c 3 biosample.csv | xxd
 sed -i '1s/^\xEF\xBB\xBF//' biosample.csv
 ```
 
+### "ophelia_summary.txt shows 0/0 for every sample"
+
+This was a bug in versions ≤1.1.0 caused by lima's output format changing: lima ≤2.7 wrote "ZMWs input" / "ZMWs above all thresholds" in `lima.summary`, while lima ≥2.8 writes "Reads input" / "Reads above all thresholds (A)". Ophelia's parser only matched the older "ZMWs" form, so per-sample stats reported 0/0 on newer lima versions even though the demux had run successfully.
+
+Fixed in v1.1.1 – the parser now accepts both forms. If you're on v1.1.0 or earlier, update by pulling the latest from GitHub:
+
+```bash
+cd ~/Scratch/bin/ophelia
+git pull
+```
+
+The barcoded BAMs from earlier runs are unaffected (this was a reporting bug only). Re-run with `--resume` to regenerate `ophelia_summary.txt` with correct numbers without re-running lima.
+
 ### "Low demultiplexing rate"
 
 Check the `*.lima.summary` file (in `reports/` if you used `--reorganise`):
@@ -772,6 +861,7 @@ Common causes:
 - Wrong barcode reference file
 - Wrong `--lima_preset` (try `ASYMMETRIC` vs `SYMMETRIC`)
 - Try `--peek-guess` to see which barcodes are actually present
+- Inspect the failure breakdown in `lima.summary` to see whether reads are failing on length, barcode score, score-lead, or end-score. See the [Minimum read length](#minimum-read-length) section for guidance on interpreting these.
 
 ### Checking pipeline logs
 
@@ -794,9 +884,9 @@ cat ~/Scratch/bin/ophelia/logs/20260127_143022/ophelia_params.txt
 Request more resources in your job script:
 
 ```bash
-#$ -l h_rt=24:00:00    # More time
-#$ -pe smp 16          # More cores
-#$ -l mem=8G           # More memory per core
+#$ -l h_rt=24:00:00     # More time
+#$ -pe smp 16           # More cores
+#$ -l mem=8G            # More memory per core
 ```
 
 ### Checking BAM read group header
@@ -811,7 +901,7 @@ samtools view -H output.bam | grep "^@RG"
 Example output:
 
 ```
-@RG  ID:60310e2c/0--16  PL:PACBIO  SM:lib_05  LB:MF_Pool2_5-8  BC:ACACACAGACTGTGAG-GATATACGCGAGAGAG  ...
+@RG ID:60310e2c/0--16 PL:PACBIO SM:lib_05 LB:MF_Pool2_5-8 BC:ACACACAGACTGTGAG-GATATACGCGAGAGAG ...
 ```
 
 Key fields:
@@ -836,6 +926,11 @@ London, UK
 ---
 
 ## Version history
+
+### 1.1.1 (May 2026)
+
+- **Bugfix:** `ophelia_summary.txt` no longer reports 0/0 for every sample when run with lima ≥2.8. Lima's `lima.summary` output format changed between major versions (older versions said "ZMWs input" / "ZMWs above all thresholds"; newer versions say "Reads input" / "Reads above all thresholds (A)"), and Ophelia's parser only matched the older form. The resume check, post-lima inline stats, and final summary parser now all accept both forms.
+- Documentation: added a Minimum read length section to the [Lima reference](#lima-reference), covering the default (50 bp), the amplicon-length floor concept, how to interpret "Below min length" in lima.summary, and when (rarely) it's worth lowering.
 
 ### 1.1.0 (May 2026)
 

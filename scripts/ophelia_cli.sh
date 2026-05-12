@@ -8,7 +8,7 @@
 #
 # Author: Michael Flower
 # Institution: UCL Queen Square Institute of Neurology
-# Version: 1.1.0
+# Version: 1.1.1
 #
 #==============================================================================
 
@@ -31,7 +31,7 @@ source "${OPHELIA_ROOT}/lib/reorganise.sh"
 # DEFAULTS
 #==============================================================================
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 # Required parameters (no defaults)
 DIR_DATA=""
@@ -114,9 +114,9 @@ log_debug() {
 
 log_section() {
     echo ""
-    echo -e "${CYAN}===============================================${NC}"
+    echo -e "${CYAN}==============================================${NC}"
     echo -e "${CYAN}  $*${NC}"
-    echo -e "${CYAN}===============================================${NC}"
+    echo -e "${CYAN}==============================================${NC}"
     echo ""
 }
 
@@ -154,6 +154,7 @@ LIMA ARGUMENTS:
                               --split-named       Name files by barcode names
                               --store-unbarcoded  Keep unassigned reads
                               --dump-removed      Save filtered reads
+                              --min-length N      Override minimum read length after clipping (default 50)
 
 OUTPUT ORGANISATION:
     --reorganise            Sort each sample's output into barcoded/, reports/,
@@ -577,10 +578,12 @@ process_bam() {
 
     # Check if already processed (resume logic). Layout-aware: looks for the
     # summary file in either the flat or reorganised location.
+    # Lima ≤2.7 wrote "ZMWs above all thresholds"; lima ≥2.8 writes
+    # "Reads above all thresholds (A)". Accept both for forward/backward compatibility.
     if [[ "${RESUME}" == "TRUE" ]]; then
         local summary_file
         summary_file=$(locate_summary_file "${output_subdir}" "${output_prefix}")
-        if [[ -n "${summary_file}" ]] && grep -q "ZMWs above all thresholds" "${summary_file}" 2>/dev/null; then
+        if [[ -n "${summary_file}" ]] && grep -qE "^(ZMWs|Reads) above all thresholds" "${summary_file}" 2>/dev/null; then
             log_info "  Skipping (already processed, --resume)"
             # If layout is flat but reorganise is requested, tidy up now.
             if [[ "${REORGANISE}" == "TRUE" && "${summary_file}" == "${output_subdir}/${output_prefix}.lima.summary" ]]; then
@@ -630,12 +633,14 @@ process_bam() {
         log_info "  ✓ Complete"
 
         # Report summary statistics (look in flat location since lima just wrote there)
+        # Lima ≤2.7 used "ZMWs input"/"ZMWs above all thresholds"; lima ≥2.8 uses
+        # "Reads input"/"Reads above all thresholds (A)". Accept both.
         local summary_file="${output_subdir}/${output_prefix}.lima.summary"
         if [[ -f "${summary_file}" ]]; then
-            local zmw_input zmw_pass
-            zmw_input=$(grep "^ZMWs input" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
-            zmw_pass=$(grep "^ZMWs above all thresholds" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
-            log_info "  Stats: ${zmw_pass}/${zmw_input} reads passed filters"
+            local reads_input reads_pass
+            reads_input=$(grep -E "^(ZMWs|Reads) input" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
+            reads_pass=$(grep -E "^(ZMWs|Reads) above all thresholds" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
+            log_info "  Stats: ${reads_pass}/${reads_input} reads passed filters"
         fi
 
         # Reorganise this sample's output if requested
@@ -691,15 +696,17 @@ generate_summary() {
             local summary
             summary=$(locate_summary_file "${output_subdir}" "${bam_name}.demux")
             if [[ -n "${summary}" ]]; then
-                local zmw_input zmw_pass pct
-                zmw_input=$(grep "^ZMWs input" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
-                zmw_pass=$(grep "^ZMWs above all thresholds" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
-                if [[ "${zmw_input}" -gt 0 ]]; then
-                    pct=$(awk "BEGIN {printf \"%.1f\", ${zmw_pass}/${zmw_input}*100}")
+                local reads_input reads_pass pct
+                # Lima ≤2.7 used "ZMWs input"/"ZMWs above all thresholds"; lima ≥2.8 uses
+                # "Reads input"/"Reads above all thresholds (A)". Accept both.
+                reads_input=$(grep -E "^(ZMWs|Reads) input" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
+                reads_pass=$(grep -E "^(ZMWs|Reads) above all thresholds" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
+                if [[ "${reads_input}" -gt 0 ]]; then
+                    pct=$(awk "BEGIN {printf \"%.1f\", ${reads_pass}/${reads_input}*100}")
                 else
                     pct="0.0"
                 fi
-                echo "  ${bam_name}: ${zmw_pass}/${zmw_input} (${pct}%)"
+                echo "  ${bam_name}: ${reads_pass}/${reads_input} (${pct}%)"
             else
                 echo "  ${bam_name}: [not processed]"
             fi
