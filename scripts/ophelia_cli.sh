@@ -165,7 +165,7 @@ OUTPUT ORGANISATION:
 EXECUTION OPTIONS:
     --resume                Skip already processed files (default: on)
     --no-resume             Force re-processing of all files
-    --dry_run               Show what would be run without executing
+    --dry_run|--dry-run         Show what would be run without executing
     --verbose               Enable verbose output
     --help                  Show this help message
 
@@ -217,7 +217,7 @@ EXAMPLES:
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-        --dry_run
+        --dry-run
 
 OUTPUT STRUCTURE:
 
@@ -320,7 +320,7 @@ parse_args() {
                 RESUME="FALSE"
                 shift
                 ;;
-            --dry_run)
+            --dry_run|--dry-run)
                 DRY_RUN="TRUE"
                 shift
                 ;;
@@ -380,7 +380,7 @@ validate_inputs() {
 
     # Validate threads is a non-negative integer
     if [[ -n "${THREADS}" && ! "${THREADS}" =~ ^[0-9]+$ ]]; then
-        log_error "--threads must be a positive integer, got: ${THREADS}"
+        log_error "--threads must be a non-negative integer, got: ${THREADS}"
         errors=$((errors + 1))
     fi
 
@@ -435,7 +435,7 @@ setup_environment() {
         # Source conda for Myriad/HPC environments
         if [[ -n "${UCL_CONDA_PATH:-}" ]]; then
             source "${UCL_CONDA_PATH}/etc/profile.d/conda.sh"
-        elif [[ -f "${CONDA_PREFIX:-}/etc/profile.d/conda.sh" ]]; then
+        elif [[ -n "${CONDA_PREFIX:-}" && -f "${CONDA_PREFIX}/etc/profile.d/conda.sh" ]]; then
             source "${CONDA_PREFIX}/etc/profile.d/conda.sh"
         fi
         eval "$(conda shell.bash hook 2>/dev/null)" || true
@@ -638,8 +638,8 @@ process_bam() {
         local summary_file="${output_subdir}/${output_prefix}.lima.summary"
         if [[ -f "${summary_file}" ]]; then
             local reads_input reads_pass
-            reads_input=$(grep -E "^(ZMWs|Reads) input" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
-            reads_pass=$(grep -E "^(ZMWs|Reads) above all thresholds" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "?")
+            reads_input=$(grep -E "^(ZMWs|Reads) input" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "0")
+            reads_pass=$(grep -E "^(ZMWs|Reads) above all thresholds" "${summary_file}" | grep -oE '[0-9]+' | head -1 || echo "0")
             log_info "  Stats: ${reads_pass}/${reads_input} reads passed filters"
         fi
 

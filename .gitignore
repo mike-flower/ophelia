@@ -8,3 +8,10 @@ dev/
 logs/*
 !logs/.gitkeep
 
+# Sequencing data (defensive – in case --dir_out is set inside the repo)
+*.bam
+*.bam.pbi
+*.consensusreadset.xml
+
+# Generated artefacts
+biosample_cleaned.csv

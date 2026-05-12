@@ -12,12 +12,11 @@ A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio'
 ./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results \
-    --barcode_ref ~/refs/barcodes.fasta
+    --barcode_ref ~/refs/barcodes.fasta \
+    --reorganise
 ```
 
-Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`).
-
-For a tidier output layout, add `--reorganise` to sort each sample's files into `barcoded/`, `reports/`, and `unbarcoded/` subfolders.
+Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`) and sorted into `barcoded/`, `reports/`, and `unbarcoded/` subfolders per sample. Drop `--reorganise` if you'd rather have a flat layout.
 
 ---
 
@@ -35,6 +34,8 @@ For a tidier output layout, add `--reorganise` to sort each sample's files into 
 - [Lima reference](#lima-reference)
 - [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
+- [Contact](#contact)
+- [Version history](#version-history)
 
 ---
 
@@ -268,32 +269,37 @@ mkdir -p logs
 #$ -S /bin/bash
 #$ -N ophelia_demux
 #$ -l h_rt=12:00:00
-#$ -pe smp 12
+#$ -pe smp 8
 #$ -l mem=4G
 #$ -l tmpfs=50G
-#$ -wd /home/skgtmdf/Scratch/bin/ophelia
+#$ -wd /home/skgtmdf/Scratch/bin/ophelia    # <<< EDIT
 #$ -o logs/ophelia_$JOB_ID.out
 #$ -e logs/ophelia_$JOB_ID.err
-#$ -M your.email@ucl.ac.uk
+#$ -M your.email@ucl.ac.uk                  # <<< EDIT
 #$ -m bea
 
-# Load environment
-module load python/miniconda3/24.3.0-0
-source $UCL_CONDA_PATH/etc/profile.d/conda.sh
-conda activate lima
+set -euo pipefail
 
-# Change to ophelia directory
+# Print job info
+echo "Job ID: $JOB_ID | Host: $(hostname) | Cores: $NSLOTS | $(date)"
+
+# Load conda so the 'conda' command is available; ophelia activates the lima env itself.
+mkdir -p logs
+module load python/miniconda3/24.3.0-0
+source "${UCL_CONDA_PATH}/etc/profile.d/conda.sh"
+
 cd ~/Scratch/bin/ophelia
 
-# Run pipeline
+# At minimum, update --dir_data, --dir_out, and --barcode_ref for your run
 ./ophelia \
     --dir_data /home/skgtmdf/Scratch/data/my_experiment/bam \
     --dir_out /home/skgtmdf/Scratch/data/my_experiment/result_ophelia \
     --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
-    --file_pattern "*bc20*.bam" \
-    --threads $NSLOTS \
+    --threads "${NSLOTS}" \
     --reorganise \
     --resume
+
+echo "Done: $(date)"
 ```
 
 #### Monitoring jobs
@@ -367,7 +373,7 @@ See the [Lima reference](#lima-reference) section for what each preset expands t
 | --- | --- | --- |
 | `--resume` | On | Skip files that have already been processed |
 | `--no-resume` | – | Force re-processing of all files |
-| `--dry_run` | Off | Show commands without executing |
+| `--dry_run` / `--dry-run` | Off | Show commands without executing |
 | `--verbose` | Off | Enable debug output |
 
 ---

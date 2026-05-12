@@ -162,6 +162,8 @@ for arg in "${PATHS[@]}"; do
     fi
 done
 
+shopt -u nullglob
+
 if [[ ${n_samples} -eq 0 ]]; then
     echo "No samples processed." >&2
     exit 1

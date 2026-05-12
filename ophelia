@@ -4,7 +4,7 @@
 #
 # A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
 #
-# Version: 1.1.0
+# Version: 1.1.1
 #
 # Usage:
 #   ./ophelia --dir_data /path/to/bams --dir_out /path/to/results [options]

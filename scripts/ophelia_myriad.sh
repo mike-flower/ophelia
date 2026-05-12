@@ -13,29 +13,30 @@
 
 # See README for setup instructions and resource recommendations.
 
+set -euo pipefail
+
 # Print job info
 echo "Job ID: $JOB_ID | Host: $(hostname) | Cores: $NSLOTS | $(date)"
 echo ""
 
-# Environment
+# Load conda so the 'conda' command is available; ophelia activates the lima env itself.
 mkdir -p logs
 module load python/miniconda3/24.3.0-0
-source $UCL_CONDA_PATH/etc/profile.d/conda.sh
-conda activate lima
-echo "Lima: $(lima --version 2>&1 | head -1)"
+source "${UCL_CONDA_PATH}/etc/profile.d/conda.sh"
 echo ""
 
 cd ~/Scratch/bin/ophelia
 
 # ==============================================================================
 # EDIT PARAMETERS BELOW
+# (At minimum, update --dir_data, --dir_out, and --barcode_ref for your run)
 # ==============================================================================
 
 ./ophelia \
     --dir_data /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/bam \
     --dir_out /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/results \
     --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
-    --threads $NSLOTS \
+    --threads "${NSLOTS}" \
     --reorganise \
     --resume
     # Optional extras:
