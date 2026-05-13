@@ -2,7 +2,7 @@
 
 A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio's lima tool.
 
-**Version 1.1.1**
+**Version 1.2.1**
 
 ---
 
@@ -13,10 +13,10 @@ A demultiplexing pipeline for PacBio HiFi amplicon sequencing data using PacBio'
     --dir_data ~/data/bam \
     --dir_out ~/results \
     --barcode_ref ~/refs/barcodes.fasta \
-    --reorganise
+    --reorganise by-type
 ```
 
-Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`) and sorted into `barcoded/`, `reports/`, and `unbarcoded/` subfolders per sample. Drop `--reorganise` if you'd rather have a flat layout.
+Output files are named by barcode pair (e.g. `bc1002--bc1050.bam`) and pooled into top-level `barcoded/`, `reports/`, and `unbarcoded/` directories across all samples. Omit `--reorganise` for raw lima output (one directory per input BAM); see [Output reorganisation](#output-reorganisation) for the other modes.
 
 ---
 
@@ -32,6 +32,12 @@ Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`) and sorted 
 - [Output structure](#output-structure)
 - [Output reorganisation](#output-reorganisation)
 - [Lima reference](#lima-reference)
+  - [HiFi presets](#hifi-presets)
+  - [`--peek-guess` and barcode inference](#--peek-guess-and-barcode-inference)
+  - [Window size](#window-size)
+  - [Minimum read length](#minimum-read-length)
+  - [Common flags](#common-flags)
+  - [Full lima flag catalog (2.13.0)](#full-lima-flag-catalog-2130)
 - [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
 - [Contact](#contact)
@@ -166,7 +172,7 @@ ophelia/
 ├── scripts/
 │   ├── ophelia_cli.sh             # Core pipeline logic
 │   ├── ophelia_myriad.sh          # HPC job submission script
-│   └── reorganise_ophelia.sh      # Standalone tool for retrofitting existing output
+│   └── reorganise_ophelia.sh      # Standalone tool for retrofitting raw output
 ├── lib/
 │   └── reorganise.sh              # Shared reorganisation library
 ├── logs/                          # Pipeline logs (created automatically)
@@ -198,7 +204,7 @@ ophelia/
     --dir_out /path/to/results \
     --barcode_ref /path/to/barcodes.fasta \
     --threads 8 \
-    --reorganise
+    --reorganise by-type
 ```
 
 **View all options:**
@@ -214,6 +220,7 @@ ophelia/
     --dir_data /path/to/bam \
     --dir_out /path/to/results \
     --barcode_ref /path/to/barcodes.fasta \
+    --reorganise by-type \
     --dry_run
 ```
 
@@ -262,45 +269,7 @@ mkdir -p logs
    qsub scripts/ophelia_myriad_myrun.sh
    ```
 
-#### Example Myriad job script
-
-```bash
-#!/bin/bash -l
-#$ -S /bin/bash
-#$ -N ophelia_demux
-#$ -l h_rt=12:00:00
-#$ -pe smp 8
-#$ -l mem=4G
-#$ -l tmpfs=50G
-#$ -wd /home/skgtmdf/Scratch/bin/ophelia    # <<< EDIT
-#$ -o logs/ophelia_$JOB_ID.out
-#$ -e logs/ophelia_$JOB_ID.err
-#$ -M your.email@ucl.ac.uk                  # <<< EDIT
-#$ -m bea
-
-set -euo pipefail
-
-# Print job info
-echo "Job ID: $JOB_ID | Host: $(hostname) | Cores: $NSLOTS | $(date)"
-
-# Load conda so the 'conda' command is available; ophelia activates the lima env itself.
-mkdir -p logs
-module load python/miniconda3/24.3.0-0
-source "${UCL_CONDA_PATH}/etc/profile.d/conda.sh"
-
-cd ~/Scratch/bin/ophelia
-
-# At minimum, update --dir_data, --dir_out, and --barcode_ref for your run
-./ophelia \
-    --dir_data /home/skgtmdf/Scratch/data/my_experiment/bam \
-    --dir_out /home/skgtmdf/Scratch/data/my_experiment/result_ophelia \
-    --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
-    --threads "${NSLOTS}" \
-    --reorganise \
-    --resume
-
-echo "Done: $(date)"
-```
+The template at `scripts/ophelia_myriad.sh` is the canonical version – see that file for the current job script content. The key fields to edit before submitting are `-wd`, `-M`, and the path arguments to `./ophelia`.
 
 #### Monitoring jobs
 
@@ -355,7 +324,7 @@ Lima is well-parallelised internally. Files are processed sequentially (one at a
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `--lima_preset` | `ASYMMETRIC` | Barcode preset (`ASYMMETRIC`, `SYMMETRIC`, `TAILED`) |
+| `--lima_preset` | `ASYMMETRIC` | Barcode preset (`ASYMMETRIC`, `SYMMETRIC`, `SYMMETRIC-ADAPTERS`) |
 | `--lima_args` | `--split-named --store-unbarcoded` | Additional arguments passed to lima |
 
 See the [Lima reference](#lima-reference) section for what each preset expands to, the meaning of `--peek-guess`, window-size guidance, the minimum read length, and other commonly used flags.
@@ -364,17 +333,17 @@ See the [Lima reference](#lima-reference) section for what each preset expands t
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `--reorganise` | Off | Sort each sample's output into `barcoded/`, `reports/`, `unbarcoded/` subfolders |
-| `--drop-unbarcoded` | Off | Delete unbarcoded BAMs instead of moving them (requires `--reorganise`) |
+| `--reorganise MODE` | *(off)* | Move output into a layout. Modes: `by-sample` (no-op, same as omitting the flag), `by-sample-type`, `by-type`, `by-type-sample`. See [Output reorganisation](#output-reorganisation). |
+| `--drop-unbarcoded` | Off | Delete unbarcoded BAMs instead of moving them (requires `--reorganise` with a non-`by-sample` mode) |
 
 ### Execution options
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `--resume` | On | Skip files that have already been processed |
-| `--no-resume` | – | Force re-processing of all files |
 | `--dry_run` / `--dry-run` | Off | Show commands without executing |
 | `--verbose` | Off | Enable debug output |
+
+Ophelia has no resume option – each invocation runs lima on every input BAM. If `--dir_out` already contains a reorganised layout from a previous run, Ophelia refuses to run; see [Re-running on an existing dir_out](#re-running-on-an-existing-dir_out).
 
 ---
 
@@ -392,48 +361,70 @@ ophelia/logs/
 │   └── ophelia_params.txt
 ```
 
-**Results without `--reorganise`** (flat layout, default):
+**Raw output** (no `--reorganise`, or `--reorganise by-sample`):
 
 ```
 dir_out/
-├── demux_bc2001/                              # One folder per input BAM
-│   ├── m84277_...bc2001.demux.bc1002--bc1050.bam
-│   ├── m84277_...bc2001.demux.bc1002--bc1051.bam
-│   ├── m84277_...bc2001.demux.unbarcoded.bam  # Unassigned reads
-│   ├── m84277_...bc2001.demux.lima.summary    # Summary statistics
-│   ├── m84277_...bc2001.demux.lima.report     # Detailed report
-│   └── m84277_...bc2001.demux.lima.counts     # Per-barcode counts
-├── demux_bc2002/
+├── m84277_..._bc2001/                         # One folder per input BAM
+│   ├── m84277_..._bc2001.demux.bc1002--bc1050.bam
+│   ├── m84277_..._bc2001.demux.bc1002--bc1051.bam
+│   ├── m84277_..._bc2001.demux.unbarcoded.bam
+│   ├── m84277_..._bc2001.demux.lima.summary
+│   ├── m84277_..._bc2001.demux.lima.report
+│   └── m84277_..._bc2001.demux.lima.counts
+├── m84277_..._bc2002/
 │   └── ...
 ├── biosample_cleaned.csv                      # BOM-stripped CSV (if applicable)
-└── ophelia_summary.txt                        # Overall demux summary
+└── ophelia_summary.txt
 ```
 
-**Results with `--reorganise`:**
+**`--reorganise by-sample-type`** – per-sample dirs with type subdirs:
 
 ```
 dir_out/
-├── demux_bc2001/
-│   ├── barcoded/                              # *.demux.<bc1>--<bc2>.{bam,bam.pbi,xml}
-│   │   ├── m84277_...bc2001.demux.bc1002--bc1050.bam
-│   │   ├── m84277_...bc2001.demux.bc1002--bc1050.bam.pbi
-│   │   └── m84277_...bc2001.demux.bc1002--bc1050.consensusreadset.xml
-│   ├── reports/                               # Lima reports + top-level metadata
-│   │   ├── m84277_...bc2001.demux.lima.summary
-│   │   ├── m84277_...bc2001.demux.lima.report
-│   │   ├── m84277_...bc2001.demux.lima.counts
-│   │   └── m84277_...bc2001.demux.json
-│   └── unbarcoded/                            # Omitted with --drop-unbarcoded
-│       └── m84277_...bc2001.demux.unbarcoded.bam
-├── demux_bc2002/
+├── m84277_..._bc2001/
+│   ├── barcoded/                  # *.demux.<bc1>--<bc2>.{bam,bam.pbi,xml}
+│   ├── reports/                   # *.lima.summary, *.lima.report, *.lima.counts
+│   └── unbarcoded/                # *.demux.unbarcoded.* (omitted with --drop-unbarcoded)
+├── m84277_..._bc2002/
 │   └── ...
-├── biosample_cleaned.csv
+└── ophelia_summary.txt
+```
+
+**`--reorganise by-type`** – top-level type dirs, all samples pooled flat:
+
+```
+dir_out/
+├── barcoded/
+│   ├── m84277_..._bc2001.demux.bc1002--bc1050.bam
+│   ├── m84277_..._bc2001.demux.bc1002--bc1050.bam.pbi
+│   ├── m84277_..._bc2002.demux.bc1003--bc1050.bam
+│   └── ...
+├── reports/
+│   ├── m84277_..._bc2001.demux.lima.summary
+│   └── ...
+├── unbarcoded/                    # omitted with --drop-unbarcoded
+│   └── ...
+└── ophelia_summary.txt
+```
+
+**`--reorganise by-type-sample`** – top-level type dirs with per-sample subdirs:
+
+```
+dir_out/
+├── barcoded/
+│   ├── m84277_..._bc2001/
+│   │   ├── m84277_..._bc2001.demux.bc1002--bc1050.bam
+│   │   └── ...
+│   └── m84277_..._bc2002/
+├── reports/
+│   └── (same pattern)
+├── unbarcoded/                    # omitted with --drop-unbarcoded
+│   └── (same pattern)
 └── ophelia_summary.txt
 ```
 
 ### Output files
-
-**In results directory:**
 
 | File | Description |
 | --- | --- |
@@ -444,76 +435,113 @@ dir_out/
 | `*.lima.counts` | Read counts per barcode pair |
 | `ophelia_summary.txt` | Overall demux summary (pass rates per file) |
 
-**In ophelia/logs/YYYYMMDD_HHMMSS/:**
-
-| File | Description |
-| --- | --- |
-| `ophelia.log` | Complete pipeline log with timestamps |
-| `ophelia_params.txt` | All parameters used for the run |
-
 ---
 
 ## Output reorganisation
 
-By default, lima writes all of a sample's output files (per-barcode BAMs, unbarcoded BAMs, lima reports, JSON metadata) into a single flat directory. This works fine for most analyses, but can become unwieldy when there are many barcodes or when downstream pipelines only care about the per-barcode BAMs.
+By default, lima writes all of a sample's output files (per-barcode BAMs, unbarcoded BAMs, lima reports, JSON metadata) into a single flat directory per input BAM. `--reorganise MODE` lets you choose a tidier layout. All modes move files; nothing is copied or symlinked.
 
-The `--reorganise` flag sorts each sample's output into three subfolders:
+### Modes
 
-- **`barcoded/`** – the per-barcode BAMs and their indices/manifests (`*.demux.<bc1>--<bc2>.{bam,bam.pbi,consensusreadset.xml}`)
-- **`reports/`** – everything lima emits about the run as a whole (`*.lima.summary`, `*.lima.report`, `*.lima.counts`, top-level JSON/XML)
-- **`unbarcoded/`** – reads that couldn't be assigned to a barcode pair (`*.demux.unbarcoded.*`)
+**`by-sample`** *(default; same as omitting the flag)*
+
+```
+dir_out/
+├── <bam_basename>/
+│   ├── *.demux.<bc1>--<bc2>.bam
+│   ├── *.demux.unbarcoded.bam
+│   └── *.lima.*
+└── ...
+```
+
+Raw lima output. One directory per input BAM, all files flat inside.
+
+**`by-sample-type`** – sample-centric with type subdirs
+
+```
+dir_out/
+├── <bam_basename>/
+│   ├── barcoded/
+│   ├── reports/
+│   └── unbarcoded/
+└── ...
+```
+
+Easy to work with one sample at a time. Consuming across samples (e.g. globbing all barcoded BAMs) requires a per-sample loop.
+
+**`by-type`** *(recommended for downstream pipelines)*
+
+```
+dir_out/
+├── barcoded/
+├── reports/
+└── unbarcoded/
+```
+
+All samples pooled flat by file type. Filenames retain library identity (e.g. `m84277_..._bc2001.demux.bc1002--bc1050.bam`), so there are no collisions across samples. Downstream tools like Duke can be pointed at `dir_out/barcoded/` in a single command with no per-library loop.
+
+**`by-type-sample`** – type-centric with per-sample subdirs
+
+```
+dir_out/
+├── barcoded/<sample>/
+├── reports/<sample>/
+└── unbarcoded/<sample>/
+```
+
+Like `by-type`, but type directories are subdivided by sample. Useful at large scale (dozens of libraries) where the flat `by-type` directories would become unwieldy to browse.
 
 Classification is purely filename-based and barcode-name-agnostic, so it works regardless of which barcode kit you used.
 
 ### Saving disk space – `--drop-unbarcoded`
 
-Unbarcoded BAMs are often the largest single output (frequently several GB) and are rarely needed once you've confirmed the demux QC looks reasonable. The `--drop-unbarcoded` flag deletes them outright instead of moving them to `unbarcoded/`. This is irreversible, so it's opt-in and requires `--reorganise` to be enabled.
+Unbarcoded BAMs are often the largest single output (frequently several GB) and are rarely needed once you've confirmed the demux QC looks reasonable. The `--drop-unbarcoded` flag deletes them outright instead of moving them. This is irreversible, so it's opt-in and requires `--reorganise` with a non-`by-sample` mode.
 
 ```bash
 ./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --reorganise --drop-unbarcoded
+    --reorganise by-type --drop-unbarcoded
 ```
 
-### Retrofitting an existing output directory
+### Retrofitting raw output
 
-There are two ways to apply the reorganised layout to an existing flat output directory:
-
-**Option 1 – re-run ophelia with `--reorganise --resume`.** The resume logic is layout-aware, so already-completed samples won't be re-run through lima; they'll just be tidied. This is the cleanest approach if you still have the original parameters to hand.
+Existing raw output can be reorganised post-hoc with the standalone `scripts/reorganise_ophelia.sh` tool. This is the right choice when you don't want to re-run lima – it does the file classification only, with no dependency on the lima/conda environment.
 
 ```bash
-./ophelia \
-    --dir_data ~/data/bam \
-    --dir_out ~/results/demux \
-    --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --reorganise \
-    --resume
-```
-
-**Option 2 – use the standalone `reorganise_ophelia.sh` script.** This is the right choice when you don't want to (or can't) re-supply the original ophelia parameters, when the lima environment isn't available, or when reorganising someone else's output. It does the file classification only, with no dependency on lima/conda.
-
-```bash
-# Reorganise a whole result_ophelia/ directory
-scripts/reorganise_ophelia.sh --path /path/to/result_ophelia
-
-# Dry run first to preview the moves
-scripts/reorganise_ophelia.sh --path /path/to/result_ophelia --dry-run
-
-# Reorganise a single sample directory
-scripts/reorganise_ophelia.sh --path /path/to/result_ophelia/demux_m84277_...bc2001
-
-# Reorganise multiple runs in one invocation
+# Pooled by type
 scripts/reorganise_ophelia.sh \
-    --path /path/to/run1/result_ophelia \
-    --path /path/to/run2/result_ophelia
+    --mode by-type \
+    --path /path/to/result_ophelia \
+    --dir_out /path/to/result_ophelia
+
+# Per-sample type subdirs
+scripts/reorganise_ophelia.sh --mode by-sample-type --path /path/to/result_ophelia
+
+# Dry run first to preview
+scripts/reorganise_ophelia.sh --mode by-type --path /path/to/result_ophelia \
+    --dir_out /path/to/result_ophelia --dry-run
 
 # Drop unbarcoded BAMs to reclaim disk space
-scripts/reorganise_ophelia.sh --path /path/to/result_ophelia --drop-unbarcoded
+scripts/reorganise_ophelia.sh --mode by-type --path /path/to/result_ophelia \
+    --dir_out /path/to/result_ophelia --drop-unbarcoded
 ```
 
-Both the integrated `--reorganise` flag and the standalone script use the same classification logic (in `lib/reorganise.sh`), so the resulting layout is identical.
+The standalone tool only operates on raw output. If you point it at an already-reorganised directory, it refuses with an error – mid-flight layout migration is not supported. To switch layouts on a directory that's already reorganised, you'd need to manually move files back to flat first (or just re-run lima from scratch).
+
+Both the integrated `--reorganise` flag and the standalone script use the same classification logic (`lib/reorganise.sh`), so the resulting layouts are identical.
+
+### Re-running on an existing dir_out
+
+Ophelia has no resume mode. Every invocation runs lima on every input BAM. To protect against producing inconsistent mixed output, Ophelia refuses to run if `--dir_out` already contains a reorganised layout (any of `barcoded/`, `reports/`, `unbarcoded/` at top level, or a `<sample>/barcoded/` etc. inside a sample dir).
+
+To re-run on a directory that has already been processed:
+
+- **Previous run produced raw output** (no `--reorganise`, or `--reorganise by-sample`): re-running is safe. Lima will overwrite each sample's output files with the new ones and produce a clean result.
+- **Previous run was reorganised**: delete `--dir_out` and re-invoke from scratch, or point `--dir_out` at a fresh path. Trying to merge a fresh lima run into an existing reorganised tree produces a confusing half-state, which is why it's refused.
+
+If you only want to *change the layout* of an existing raw run without re-running lima, use `scripts/reorganise_ophelia.sh` instead – see [Retrofitting raw output](#retrofitting-raw-output) above.
 
 ---
 
@@ -530,9 +558,8 @@ Ophelia is a thin wrapper around lima – any lima option can be passed through 
 | `SYMMETRIC` | `--ccs --min-score 0 --min-end-score 80 --min-ref-span 0.75 --same --single-end` |
 | `SYMMETRIC-ADAPTERS` | `--ccs --min-score 0 --min-end-score 80 --min-ref-span 0.75 --same --ignore-missing-adapters --single-end` |
 | `ASYMMETRIC` | `--ccs --min-score 80 --min-end-score 50 --min-ref-span 0.75 --different --min-scoring-regions 2` |
-| `TAILED` | (lima's tailed-amplicon recommended settings) |
 
-Use `ASYMMETRIC` for designs where forward and reverse primers carry different barcodes (most amplicon pooling, including Kinnex 16S). Use `SYMMETRIC` for designs where the same barcode appears on both ends.
+Use `ASYMMETRIC` for designs where forward and reverse primers carry different barcodes (most amplicon pooling, including Kinnex 16S). Use `SYMMETRIC` for designs where the same barcode appears on both ends. For tailed-library designs (same barcode on both ends, opposite orientation), `SYMMETRIC` is the right choice – lima has no separate `TAILED` HiFi preset.
 
 ### `--peek-guess` and barcode inference
 
@@ -641,21 +668,147 @@ samtools view demux_*/unbarcoded/*.unbarcoded.bam | awk '{ print length($10) }' 
 
 In most cases the bigger lever for recovering yield is **using `--biosample_csv` to constrain lima to the valid barcode pairs in your design** – this both eliminates false-positive pairs and improves `score-lead` calls on legitimate reads. Threshold tweaking is a second-order optimisation.
 
-### Other useful flags
+### Common flags
 
-These come up often enough to be worth knowing about, even though they're documented in `lima --help`:
+These come up most often. The full lima 2.13.0 flag catalog is in the next section.
 
 | Flag | Use |
 | --- | --- |
 | `--split-named` | Name output files by barcode names rather than indices (Ophelia uses this by default) |
 | `--store-unbarcoded` | Keep reads that couldn't be assigned a barcode (Ophelia uses this by default; pair with `--drop-unbarcoded` after QC to reclaim disk space) |
 | `--peek-guess` | Infer which barcodes are present (slower; two-pass) |
-| `--dump-removed` | Save reads filtered out by quality thresholds (not just unbarcoded) |
+| `--dump-clips` | Save the clipped barcode regions to `<prefix>.lima.clips` (useful for QC of barcode boundaries) |
+| `--no-clip` | Identify barcode pairs but leave them in the read sequence |
 | `--min-length N` | Override the default minimum read length after clipping (default 50; see [Minimum read length](#minimum-read-length) above) |
 | `--min-score N` | Override the preset's minimum barcode score (lower = more permissive) |
 | `--min-score-lead N` | Minimum score margin between best and second-best barcode call (lower = more permissive) |
 | `--min-passes N` | Require N full passes through the SMRTbell (default 0; rarely needed for HiFi) |
-| `--num-threads N` | Threads (Ophelia sets this from `--threads`, no need to pass directly) |
+| `--window-size N` | Explicit barcode search window in bp (default 0 = use multiplier) – see [Window size](#window-size) above |
+
+### Full lima flag catalog (2.13.0)
+
+The sections below mirror the grouping in `lima --help` on lima 2.13.0 (the version on UCL Myriad's bioconda channel) so you can cross-reference them against your installed binary at any time. Pass any of these flags via `--lima_args`, except for the three that have dedicated Ophelia flags (`--hifi-preset`, `--biosample-csv`, `--num-threads`) which must not be duplicated inside `--lima_args`.
+
+**Defaults marked with ★ are flags Ophelia adds automatically.**
+
+#### Library design
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-s, --same` | flag | off | Only keep same-barcode pairs (`bc1002--bc1002`) in output |
+| `-d, --different` | flag | off | Only keep different-barcode pairs in output. Enforces `--min-passes ≥ 1` |
+| `-N, --neighbors` | flag | off | Only output barcode pairs that are neighbours in the barcode file |
+| `--hifi-preset` | str | none | Recommended HiFi parameter preset (Ophelia: use `--lima_preset` instead) |
+| `--omit-barcode-infix` | flag | off | Omit the barcode pair infix in output filenames |
+
+#### Input limitations
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-p, --per-read` | flag | off | Tag per read rather than per ZMW (CLR subread workflows) |
+| `-f, --score-full-pass` | flag | off | Only score subreads flanked by adapters on both sides |
+| `-n, --max-scored-barcode-pairs` | int | 0 | Use at most N barcode pair regions for identification (0 = all) |
+| `-b, --max-scored-barcodes` | int | 0 | Analyse at most N barcodes per ZMW (0 = no cap) |
+| `-a, --max-scored-adapters` | int | 0 | Analyse at most N adapters per ZMW (0 = no cap) |
+| `-u, --min-passes` | int | 0 | Minimum number of full passes through the SMRTbell |
+| `-l, --min-length` | int | 50 | Minimum sequence length after barcode clipping (see [Minimum read length](#minimum-read-length)) |
+| `-L, --max-input-length` | int | 0 | Maximum input sequence length (0 = no cap) |
+| `-M, --bad-adapter-ratio` | float | 0 | Maximum ratio of bad adapters per ZMW before rejection |
+| `-P, --shared-prefix` | flag | off | Allow barcodes to be substrings of others (needed for some custom barcode sets) |
+| `--fail-reads-only` | flag | off | Only process `fail_reads.bam` files from the input dataset XML |
+
+#### Barcode region
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-w, --window-size-multi` | float | 3 | Search window size as a multiplier of barcode length |
+| `-W, --window-size` | int | 0 | Explicit search window size in bp; overrides the multiplier when set (see [Window size](#window-size)) |
+| `-r, --min-ref-span` | float | 0.5 | Minimum reference span as a fraction of barcode length (presets override this to 0.75) |
+| `-R, --min-scoring-regions` | int | 1 | Minimum barcode regions with sufficient span (ASYMMETRIC preset sets this to 2) |
+
+#### Score filters
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-m, --min-score` | int | 0 | Reads with combined barcode score ≤ this are dropped |
+| `-i, --min-end-score` | int | 0 | Minimum per-end barcode score (applied to leading and trailing flanks separately) |
+| `-x, --min-signal-increase` | int | 10 | Minimum score difference between first and combined for a pair to be called "different" |
+| `-y, --min-score-lead` | int | 10 | Minimum score lead between best and second-best barcode call |
+
+#### Aligner configuration
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--ccs` | flag | off | CCS-tuned alignment penalties (`-A 1 -B 4 -D 3 -I 3 -X 4`); all HiFi presets enable this |
+| `-A, --match-score` | int | 4 | Sequence match score |
+| `-B, --mismatch-penalty` | int | 13 | Mismatch penalty |
+| `-D, --deletion-penalty` | int | 7 | Deletion penalty |
+| `-I, --insertion-penalty` | int | 7 | Insertion penalty |
+| `-X, --branch-penalty` | int | 4 | Branch penalty |
+
+#### Output splitting
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--split` | flag | off | Split output by barcode pair index |
+| `--split-named` | flag | ★ on | Split output by resolved barcode pair name (Ophelia adds this) |
+| `-F, --files-per-directory` | int | 0 | Group split output into subdirectories of N files each (0 = single dir) |
+| `--split-subdirs` | flag | off | Place each barcode in its own subdirectory |
+| `-U, --reuse-biosample-uuids` | flag | off | Reuse UUIDs from BioSample entries (XML output only) |
+| `--reuse-source-uuid` | flag | off | Reuse UUID from input dataset XML |
+| `--no-clip` | flag | off | Call barcode pairs but do not clip them from the read sequence |
+
+#### Output restrictions
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--output-handles` | int | 500 | Maximum number of simultaneously open output files |
+| `--dump-clips` | flag | off | Dump clipped barcode regions to `<prefix>.lima.clips` |
+| `--store-unbarcoded` | flag | ★ on | Store unbarcoded reads to a separate file (Ophelia adds this; combine with `--drop-unbarcoded` after QC to reclaim disk space) |
+| `--no-output` | flag | off | Skip demultiplexed BAM output entirely (reports only) |
+| `--no-reports` | flag | off | Skip the lima reports (`.summary` / `.report` / `.counts`) |
+| `--output-missing-pairs` | flag | off | Emit empty BAMs for all biosample barcode pairs, even those with zero reads |
+
+#### Single-side library options
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-S, --single-side` | flag | off | Assign barcodes from a single side by score clustering |
+| `--scored-adapter-ratio` | float | 0.25 | Minimum ratio of scored to sequenced adapters |
+| `--ignore-missing-adapters` | flag | off | Ignore consensus-read flanks labelled as missing-adapter (SYMMETRIC-ADAPTERS preset enables this) |
+
+#### IsoSeq
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--isoseq` | flag | off | IsoSeq-specific demultiplexing (not used by typical Ophelia HD/amplicon workflows) |
+
+#### Inference and biosample handling
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--peek` | int | 0 | Demux only the first N ZMWs and report mean barcode score (for barcode-set sanity-checking) |
+| `--guess` | int | 0 | Two-pass inference: keep barcode pairs with mean score ≥ N (0 = disabled) |
+| `--guess-min-count` | int | 0 | Minimum ZMW count for a barcode pair to be whitelisted during inference |
+| `--peek-guess` | flag | off | Shortcut for `--peek 50000 --guess 45 --guess-min-count 10` (with `--ccs`: 75/10; with `--isoseq`: 75/100) |
+| `--ignore-xml-biosamples` | flag | off | Ignore `<BioSamples>` entries from XML input |
+| `--biosample-csv` | str | none | Map barcode pairs to biosample names (Ophelia: use `--biosample_csv` instead) |
+| `--overwrite-biosample-names` | flag | off | In `--isoseq` mode, overwrite existing SM tag values |
+
+#### Index sorting (CCS only)
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-k, --keep-tag-idx-order` | flag | off | Keep identified barcode pair index order in the BC tag |
+| `-K, --keep-split-idx-order` | flag | off | Keep identified barcode pair index order in split output filenames |
+
+#### Logging and runtime
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `-j, --num-threads` | int | 0 | Thread count; 0 = autodetect (Ophelia sets this from `--threads`, don't pass directly) |
+| `--log-level` | str | WARN | Log verbosity: TRACE, DEBUG, INFO, WARN, FATAL |
+| `--log-file` | file | – | Log to a file instead of stderr |
 
 ### Quick reference – passing args through Ophelia
 
@@ -668,7 +821,7 @@ Anything that doesn't have a dedicated Ophelia flag goes inside `--lima_args`:
     --barcode_ref ~/refs/barcodes.fasta \
     --lima_preset ASYMMETRIC \
     --lima_args "--split-named --store-unbarcoded --peek-guess --window-size 100" \
-    --reorganise
+    --reorganise by-type
 ```
 
 Ophelia explicitly handles `--biosample-csv` (via `--biosample_csv`), `--num-threads` (via `--threads`), and `--hifi-preset` (via `--lima_preset`) – passing these inside `--lima_args` will cause a duplicate-flag error from lima. Everything else is fair game.
@@ -677,23 +830,47 @@ Ophelia explicitly handles `--biosample-csv` (via `--biosample_csv`), `--num-thr
 
 ## Common workflows
 
-### 1. Basic demultiplexing (recommended)
+### 1. Pool by type for downstream consumption (recommended)
 
-Standard workflow for most users:
+The most common workflow when feeding output into downstream pipelines (e.g. Duke):
 
 ```bash
 ./ophelia \
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --reorganise
+    --reorganise by-type
+# Then point downstream tools at ~/results/demux/barcoded/
 ```
 
-Output files are named by barcode pairs (e.g., `bc1002--bc1050.bam`). The filename is the reliable sample identifier for downstream analysis. The `--reorganise` flag is recommended when feeding output into downstream pipelines that only need the per-barcode BAMs.
+Output files are named by barcode pair (e.g., `bc1002--bc1050.bam`) and pooled flat in `dir_out/barcoded/`. Filenames retain library identity so there are no cross-sample collisions.
 
-### 2. Process specific files
+### 2. Sample-centric view (one sample at a time)
 
-Process only certain barcode files (e.g., exclude `unassigned.bam`):
+When you want to work with each library as a self-contained unit:
+
+```bash
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results/demux \
+    --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+    --reorganise by-sample-type
+```
+
+### 3. Raw lima output
+
+If you'd rather have one flat directory per input BAM (no reorganisation):
+
+```bash
+./ophelia \
+    --dir_data ~/data/bam \
+    --dir_out ~/results/demux \
+    --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
+```
+
+### 4. Process specific files
+
+Process only certain BAM files (e.g., exclude `unassigned.bam`):
 
 ```bash
 ./ophelia \
@@ -701,10 +878,10 @@ Process only certain barcode files (e.g., exclude `unassigned.bam`):
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
     --file_pattern "*bc20*.bam" \
-    --reorganise
+    --reorganise by-type
 ```
 
-### 3. Unknown barcodes
+### 5. Unknown barcodes
 
 When you don't know which barcode combinations are present (lima will infer):
 
@@ -718,7 +895,7 @@ When you don't know which barcode combinations are present (lima will infer):
 
 **Note:** `--peek-guess` is slower (two-pass).
 
-### 4. Test run (dry run)
+### 6. Test run (dry run)
 
 See what would happen without actually running:
 
@@ -727,28 +904,24 @@ See what would happen without actually running:
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+    --reorganise by-type \
     --dry_run
 ```
 
-### 5. Resume after interruption
+### 7. Re-running on an existing dir_out
 
-The `--resume` option (default) skips files that have already been processed. Ophelia checks for the existence of a complete `.lima.summary` file (in either the flat or reorganised layout) to determine completion.
+Ophelia has no resume mode – every invocation processes every input BAM. If the previous run produced raw output (no `--reorganise`), re-running is safe: lima will overwrite the per-sample files cleanly.
 
-```bash
-# First run (interrupted or some files fail)
-./ophelia --dir_data ~/data/bam --dir_out ~/results ...
-
-# Re-run (only processes incomplete files)
-./ophelia --dir_data ~/data/bam --dir_out ~/results ...
-```
-
-To force re-processing of all files:
+If the previous run was reorganised, Ophelia will refuse to run. Delete `--dir_out` and start over, or point at a fresh path:
 
 ```bash
-./ophelia --dir_data ~/data/bam --dir_out ~/results ... --no-resume
+rm -rf ~/results/demux
+./ophelia --dir_data ~/data/bam --dir_out ~/results/demux ...
 ```
 
-### 6. Custom SM tags (optional)
+See [Re-running on an existing dir_out](#re-running-on-an-existing-dir_out) for the full rationale.
+
+### 8. Custom SM tags (optional)
 
 If downstream tools require custom sample names in the BAM `@RG SM:` tag:
 
@@ -757,12 +930,13 @@ If downstream tools require custom sample names in the BAM `@RG SM:` tag:
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --biosample_csv ~/refs/biosample.csv
+    --biosample_csv ~/refs/biosample.csv \
+    --reorganise by-type
 ```
 
 This overrides the original SM tag (e.g., `SM:lib_05` from sequencing setup) with your biosample name. Most users don't need this – use filenames for sample tracking instead.
 
-### 7. Save disk space on confirmed runs
+### 9. Save disk space on confirmed runs
 
 Once a demux has been QC'd and you're confident the unbarcoded reads aren't needed:
 
@@ -771,13 +945,17 @@ Once a demux has been QC'd and you're confident the unbarcoded reads aren't need
     --dir_data ~/data/bam \
     --dir_out ~/results/demux \
     --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-    --reorganise --drop-unbarcoded
+    --reorganise by-type --drop-unbarcoded
 ```
 
-Or retrofit an existing run:
+Or retrofit an existing raw run:
 
 ```bash
-scripts/reorganise_ophelia.sh --path ~/results/demux --drop-unbarcoded
+scripts/reorganise_ophelia.sh \
+    --mode by-type \
+    --path ~/results/demux \
+    --dir_out ~/results/demux \
+    --drop-unbarcoded
 ```
 
 ---
@@ -807,6 +985,26 @@ cd ~/Scratch/bin/ophelia
 ### "shared library not found at .../lib/reorganise.sh"
 
 This appears if you've copied an individual script out of the repo. Both `scripts/ophelia_cli.sh` and `scripts/reorganise_ophelia.sh` rely on `lib/reorganise.sh` at the ophelia repo root. Run them from inside a checked-out ophelia repo, or copy both the `scripts/` and `lib/` directories together.
+
+### "exists at top level" or "contains a reorganised layout"
+
+This appears when `--dir_out` already has a `barcoded/`, `reports/`, or `unbarcoded/` directory (either at the top level or inside a sample dir) from a previous reorganised run. Ophelia refuses to mix fresh lima output into an existing reorganised tree. To proceed:
+
+- Delete `--dir_out` and re-run from scratch (cleanest), or
+- Point `--dir_out` at a fresh path.
+
+To change the layout of an existing raw run without re-running lima, use `scripts/reorganise_ophelia.sh` instead.
+
+### "--reorganise requires a mode value"
+
+As of v1.2.0, `--reorganise` requires a mode value. Old scripts that used `--reorganise` bare will fail with this error. Update to one of:
+
+```bash
+--reorganise by-sample       # raw output (same as omitting the flag)
+--reorganise by-sample-type  # per-sample dirs with type subdirs
+--reorganise by-type         # pooled type dirs (recommended for downstream)
+--reorganise by-type-sample  # pooled type dirs with per-sample subdirs
+```
 
 ### "can't open output file ... logs/ophelia_XXX.out: No such file or directory" (Myriad)
 
@@ -840,26 +1038,14 @@ head -c 3 biosample.csv | xxd
 sed -i '1s/^\xEF\xBB\xBF//' biosample.csv
 ```
 
-### "ophelia_summary.txt shows 0/0 for every sample"
-
-This was a bug in versions ≤1.1.0 caused by lima's output format changing: lima ≤2.7 wrote "ZMWs input" / "ZMWs above all thresholds" in `lima.summary`, while lima ≥2.8 writes "Reads input" / "Reads above all thresholds (A)". Ophelia's parser only matched the older "ZMWs" form, so per-sample stats reported 0/0 on newer lima versions even though the demux had run successfully.
-
-Fixed in v1.1.1 – the parser now accepts both forms. If you're on v1.1.0 or earlier, update by pulling the latest from GitHub:
-
-```bash
-cd ~/Scratch/bin/ophelia
-git pull
-```
-
-The barcoded BAMs from earlier runs are unaffected (this was a reporting bug only). Re-run with `--resume` to regenerate `ophelia_summary.txt` with correct numbers without re-running lima.
-
 ### "Low demultiplexing rate"
 
-Check the `*.lima.summary` file (in `reports/` if you used `--reorganise`):
+Check the `*.lima.summary` file (location depends on `--reorganise` mode):
 
 ```bash
-cat results/demux_bc2001/*.lima.summary           # flat layout
-cat results/demux_bc2001/reports/*.lima.summary   # reorganised layout
+cat results/m84277_..._bc2001/*.lima.summary           # raw layout
+cat results/m84277_..._bc2001/reports/*.lima.summary   # by-sample-type
+cat results/reports/m84277_..._bc2001.demux.lima.summary  # by-type
 ```
 
 Common causes:
@@ -932,6 +1118,31 @@ London, UK
 ---
 
 ## Version history
+
+### 1.2.1 (May 2026)
+
+- **Bugfix:** `--lima_preset TAILED` is no longer accepted by ophelia's validation. Lima has no `TAILED` HiFi preset (the only valid values are `ASYMMETRIC`, `SYMMETRIC`, and `SYMMETRIC-ADAPTERS`, verified against lima 2.13.0's `--help`). Previously ophelia's allowlist included `TAILED` so the value passed ophelia's check and only failed when lima itself rejected it. For tailed-library designs, use `SYMMETRIC`.
+- **Bugfix:** `--dry_run` no longer requires `lima` in `PATH`. The lima check is now downgraded to a warning during dry-run, so the canonical "preview from my laptop before `qsub`" workflow works on machines without lima installed.
+- **Bugfix:** dry-run lima command preview now shows the would-be cleaned biosample CSV path (`<dir_out>/biosample_cleaned.csv`) rather than the original BOM-containing path, matching what an actual run would execute.
+- **Docs:** `--dump-removed` removed from the "useful flags" list and the help text – the flag does not exist in lima 2.13.0. Replaced with `--dump-clips` (which dumps clipped barcode regions to `<prefix>.lima.clips`) where the QC use case applies.
+- **Docs:** Expanded the lima reference with a full flag catalog organised to mirror `lima --help`'s own sections, verified against lima 2.13.0 on UCL Myriad. Covers Library design, Input limitations, Barcode region, Score filters, Aligner configuration, Output splitting/restrictions, Single-side, IsoSeq, Inference, Index sorting, and Logging.
+- **Docs:** `--threads` help text now describes the actual behaviour (`0` omits `--num-threads` so lima picks – usually all visible cores) rather than the vague "auto-detect".
+- **Docs:** `--help` now documents the `--reorganize` and `-h` aliases.
+- **Docs:** Myriad template now flags itself as Small-run sized and points to the README's resource table for scaling up. Optional-extras comment block moved below the command to remove indentation ambiguity.
+- Minor: removed an unused `local` declaration in `reorganise_ophelia.sh`'s `detect_path_type`.
+
+### 1.2.0 (May 2026)
+
+- **Breaking:** `--reorganise` now requires a mode value. Scripts that used `--reorganise` bare must be updated (typically to `--reorganise by-sample-type` to preserve previous behaviour, or `--reorganise by-type` for the new pooled layout).
+- **Breaking:** sample output directories are now named after the BAM basename with no prefix. Previously they were `demux_<bam_basename>/`; now they are `<bam_basename>/`. Downstream pipelines that glob `demux_*/` need to be updated.
+- **Breaking:** the `--resume` / `--no-resume` flags have been removed. Each invocation now runs lima on every input BAM. If `--dir_out` already contains a reorganised layout, Ophelia refuses to run rather than risk producing inconsistent mixed output. Resilience against long-running jobs is better handled at the scheduling layer (e.g. one job per BAM) than via in-script resume logic.
+- **New:** four `--reorganise` modes: `by-sample` (raw output, default), `by-sample-type`, `by-type`, `by-type-sample`. See [Output reorganisation](#output-reorganisation).
+- **New:** `--reorganise by-type` pools all samples' barcoded BAMs into one top-level `barcoded/` directory across libraries. Recommended for feeding into downstream pipelines.
+- `--no-reorganise` removed (use `--reorganise by-sample` or omit the flag entirely).
+- Standalone `reorganise_ophelia.sh` updated: requires `--mode`, refuses already-reorganised input, auto-detects sample dirs vs parent dirs by content.
+- Dry-run no longer touches `dir_out` or writes `biosample_cleaned.csv`. The timestamped `logs/<timestamp>/` directory and its `ophelia.log` / `ophelia_params.txt` are still written so the preview is reproducible.
+- Library: `reorganise_sample_dir` now takes `(sample_dir, mode, dir_out, drop_unbarcoded, dry_run)`; `locate_summary_file` probes all four mode layouts; nullglob state is saved and restored.
+- Myriad template updated to use `--reorganise by-type` and a placeholder email.
 
 ### 1.1.1 (May 2026)
 

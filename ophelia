@@ -4,14 +4,14 @@
 #
 # A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
 #
-# Version: 1.1.1
+# Version: 1.2.1
 #
 # Usage:
 #   ./ophelia --dir_data /path/to/bams --dir_out /path/to/results [options]
 #
 # Examples:
 #   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta
-#   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --reorganise
+#   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --reorganise by-type
 #   ./ophelia --dir_data ~/data/bam --dir_out ~/results --barcode_ref ~/refs/barcodes.fasta --biosample_csv ~/refs/biosample.csv
 #   ./ophelia --help
 #

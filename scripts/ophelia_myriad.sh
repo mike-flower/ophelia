@@ -8,10 +8,12 @@
 #$ -wd /home/skgtmdf/Scratch/bin/ophelia    # <<< EDIT
 #$ -o logs/ophelia_$JOB_ID.out
 #$ -e logs/ophelia_$JOB_ID.err
-#$ -M michael.flower@ucl.ac.uk             # <<< EDIT
+#$ -M your.email@ucl.ac.uk                  # <<< EDIT
 #$ -m bea
 
-# See README for setup instructions and resource recommendations.
+# This template is sized for a Small run (1-4 files, <100k reads each).
+# For Medium/Large runs, bump -pe smp (12-24) and -l h_rt accordingly.
+# See README "Resource recommendations" for guidance.
 
 set -euo pipefail
 
@@ -37,13 +39,18 @@ cd ~/Scratch/bin/ophelia
     --dir_out /home/skgtmdf/Scratch/data/2025.01.27_pb_demux/results \
     --barcode_ref /home/skgtmdf/Scratch/bin/ophelia/www/pacbio_M13_barcodes.fasta \
     --threads "${NSLOTS}" \
-    --reorganise \
-    --resume
-    # Optional extras:
-    #   --drop-unbarcoded   # delete unbarcoded BAMs (irreversible; saves disk space)
-    #   --biosample_csv /path/to/biosample.csv
-    #   --file_pattern "*bc20*.bam"
-    #   --lima_args "--split-named --store-unbarcoded --peek-guess"
+    --reorganise by-type
+
+# Optional extras (add to the ./ophelia invocation above, before the closing line):
+#   --drop-unbarcoded   # delete unbarcoded BAMs (irreversible; saves disk space)
+#   --biosample_csv /path/to/biosample.csv
+#   --file_pattern "*bc20*.bam"
+#   --lima_args "--split-named --store-unbarcoded --peek-guess"
+#
+# Other reorganise modes:
+#   --reorganise by-sample        no reorganisation; raw lima output
+#   --reorganise by-sample-type   per-sample dirs with type subdirs
+#   --reorganise by-type-sample   pooled type dirs with per-sample subdirs
 
 # ==============================================================================
 

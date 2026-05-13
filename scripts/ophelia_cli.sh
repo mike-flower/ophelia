@@ -3,12 +3,12 @@
 # Ophelia - PacBio Demultiplexing Pipeline
 #==============================================================================
 #
-# A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data
-# Processes all BAM files in a directory using PacBio's lima tool
+# A wrapper for PacBio's lima tool for demultiplexing HiFi amplicon sequencing data.
+# Processes all BAM files in a directory using PacBio's lima tool.
 #
 # Author: Michael Flower
 # Institution: UCL Queen Square Institute of Neurology
-# Version: 1.1.1
+# Version: 1.2.1
 #
 #==============================================================================
 
@@ -31,7 +31,7 @@ source "${OPHELIA_ROOT}/lib/reorganise.sh"
 # DEFAULTS
 #==============================================================================
 
-VERSION="1.1.1"
+VERSION="1.2.1"
 
 # Required parameters (no defaults)
 DIR_DATA=""
@@ -47,14 +47,18 @@ THREADS=0   # 0 = auto-detect
 LIMA_PRESET="ASYMMETRIC"
 LIMA_ARGS="--split-named --store-unbarcoded"
 
-# Reorganisation options (off by default to preserve historical layout)
-REORGANISE="FALSE"
+# Reorganisation mode. Valid values:
+#   by-sample        no reorganisation (= omitting the flag)
+#   by-sample-type   <sample>/{barcoded,reports,unbarcoded}/
+#   by-type          dir_out/{barcoded,reports,unbarcoded}/
+#   by-type-sample   dir_out/{barcoded,reports,unbarcoded}/<sample>/
+# Empty string means "flag was not passed" (treated identically to by-sample).
+REORGANISE=""
 DROP_UNBARCODED="FALSE"
 
 # Execution options
 DRY_RUN="FALSE"
 VERBOSE="FALSE"
-RESUME="TRUE"
 
 # Runtime globals (set during execution)
 LIMA_VERSION=""
@@ -143,53 +147,78 @@ REQUIRED ARGUMENTS:
 OPTIONAL ARGUMENTS:
     --biosample_csv FILE    BioSample CSV to override BAM SM tag (does not rename files)
     --file_pattern GLOB     Pattern to match BAM files (default: *.bam)
-    --threads N             Number of threads (default: auto-detect)
+    --threads N             Number of threads to pass to lima (default: 0, which omits
+                            --num-threads entirely so lima picks – typically all visible
+                            cores. On HPC pass an explicit value, e.g. "${NSLOTS}")
 
 LIMA ARGUMENTS:
     --lima_preset PRESET    Lima HiFi preset (default: ASYMMETRIC)
-                            Options: ASYMMETRIC, SYMMETRIC, SYMMETRIC-ADAPTERS, TAILED
+                            Options: ASYMMETRIC, SYMMETRIC, SYMMETRIC-ADAPTERS
     --lima_args "ARGS"      Additional lima arguments (default: "--split-named --store-unbarcoded")
                             Common options:
                               --peek-guess        Infer which barcodes are present
                               --split-named       Name files by barcode names
                               --store-unbarcoded  Keep unassigned reads
-                              --dump-removed      Save filtered reads
+                              --dump-clips        Save clipped barcode regions to *.lima.clips
                               --min-length N      Override minimum read length after clipping (default 50)
 
 OUTPUT ORGANISATION:
-    --reorganise            Sort each sample's output into barcoded/, reports/,
-                            and unbarcoded/ subfolders (default: off)
+    --reorganise MODE       Move output files into a tidier layout. MODE must be one of:
+                              by-sample        no reorganisation; raw lima output
+                                               (same as omitting the flag)
+                              by-sample-type   per-sample dirs with type subdirs:
+                                               <sample>/{barcoded,reports,unbarcoded}/
+                              by-type          top-level type dirs, samples pooled flat:
+                                               {barcoded,reports,unbarcoded}/
+                              by-type-sample   top-level type dirs with per-sample subdirs:
+                                               {barcoded,reports,unbarcoded}/<sample>/
     --drop-unbarcoded       Delete unbarcoded BAMs instead of moving them
-                            (saves significant disk space; requires --reorganise)
+                            (saves disk space; irreversible; requires --reorganise
+                            to be set to a non-by-sample mode)
 
 EXECUTION OPTIONS:
-    --resume                Skip already processed files (default: on)
-    --no-resume             Force re-processing of all files
-    --dry_run|--dry-run         Show what would be run without executing
+    --dry_run|--dry-run     Show what would be run without executing
     --verbose               Enable verbose output
-    --help                  Show this help message
+    --help|-h               Show this help message
+
+    Note: --reorganise also accepts --reorganize (American spelling).
 
 EXAMPLES:
 
-    # Basic demultiplexing (you know which barcodes are present)
+    # Basic demultiplexing (raw output, one dir per input BAM)
     ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta
 
-    # With reorganised output layout (recommended for downstream pipelines)
+    # All samples pooled by file type (recommended for downstream pipelines like Duke)
     ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-        --reorganise
+        --reorganise by-type
+    # Then point downstream tools at ~/results/demux/barcoded/
 
-    # Reorganise and drop unbarcoded BAMs to save disk space
+    # Per-sample dirs with type subfolders (sample-centric view)
     ./ophelia \
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-        --reorganise --drop-unbarcoded
+        --reorganise by-sample-type
+
+    # By type with per-sample subdirs (large-scale runs with many libraries)
+    ./ophelia \
+        --dir_data ~/data/bam \
+        --dir_out ~/results/demux \
+        --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+        --reorganise by-type-sample
+
+    # Drop unbarcoded BAMs to save disk space (irreversible)
+    ./ophelia \
+        --dir_data ~/data/bam \
+        --dir_out ~/results/demux \
+        --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
+        --reorganise by-type --drop-unbarcoded
 
     # With SM tag override (files still named by barcode pair)
     ./ophelia \
@@ -217,30 +246,56 @@ EXAMPLES:
         --dir_data ~/data/bam \
         --dir_out ~/results/demux \
         --barcode_ref ~/refs/pacbio_M13_barcodes.fasta \
-        --dry-run
+        --reorganise by-type --dry-run
 
 OUTPUT STRUCTURE:
 
-    Without --reorganise (flat, default):
+    no --reorganise flag (or --reorganise by-sample) – raw lima output:
         dir_out/
-        ├── demux_m84277_...bc2001/        # One folder per input BAM
-        │   ├── *.demux.<bc1>--<bc2>.bam   # Demultiplexed BAM files
-        │   ├── *.demux.unbarcoded.bam     # Unassigned reads
-        │   ├── *.lima.summary             # Lima summary statistics
-        │   ├── *.lima.report              # Detailed lima report
-        │   └── *.lima.counts              # Read counts per barcode
-        ├── demux_m84277_...bc2002/
+        ├── m84277_...bc2001/
+        │   ├── *.demux.bc1002--bc1050.bam
+        │   ├── *.demux.unbarcoded.bam
+        │   ├── *.lima.summary
+        │   ├── *.lima.report
+        │   └── *.lima.counts
+        ├── m84277_...bc2002/
         │   └── ...
-        └── ophelia_summary.txt            # Overall summary
+        └── ophelia_summary.txt
 
-    With --reorganise:
+    --reorganise by-sample-type – per-sample dirs with type subdirs:
         dir_out/
-        ├── demux_m84277_...bc2001/
-        │   ├── barcoded/                  # *.demux.<bc1>--<bc2>.{bam,bam.pbi,xml}
-        │   ├── reports/                   # *.lima.summary, *.lima.report, *.lima.counts
-        │   └── unbarcoded/                # *.demux.unbarcoded.* (omitted with --drop-unbarcoded)
-        ├── demux_m84277_...bc2002/
+        ├── m84277_...bc2001/
+        │   ├── barcoded/    # *.demux.<bc1>--<bc2>.{bam,bam.pbi,xml}
+        │   ├── reports/     # *.lima.summary, *.lima.report, *.lima.counts
+        │   └── unbarcoded/  # *.demux.unbarcoded.* (omitted with --drop-unbarcoded)
+        ├── m84277_...bc2002/
         │   └── ...
+        └── ophelia_summary.txt
+
+    --reorganise by-type – top-level type dirs, all samples pooled flat:
+        dir_out/
+        ├── barcoded/
+        │   ├── m84277_...bc2001.demux.bc1002--bc1050.bam
+        │   ├── m84277_...bc2002.demux.bc1003--bc1050.bam
+        │   └── ...
+        ├── reports/
+        │   ├── m84277_...bc2001.demux.lima.summary
+        │   └── ...
+        ├── unbarcoded/      # omitted with --drop-unbarcoded
+        │   └── ...
+        └── ophelia_summary.txt
+
+    --reorganise by-type-sample – top-level type dirs with per-sample subdirs:
+        dir_out/
+        ├── barcoded/
+        │   ├── m84277_...bc2001/
+        │   │   ├── *.demux.bc1002--bc1050.bam
+        │   │   └── ...
+        │   └── m84277_...bc2002/
+        ├── reports/
+        │   └── (same pattern)
+        ├── unbarcoded/      # omitted with --drop-unbarcoded
+        │   └── (same pattern)
         └── ophelia_summary.txt
 
     Logs (in ophelia installation directory):
@@ -249,14 +304,17 @@ OUTPUT STRUCTURE:
     └── ophelia_params.txt
 
 NOTES:
-    - Lima is internally parallelised, so files are processed sequentially
+    - Lima is internally parallelised, so files are processed sequentially.
     - The biosample CSV should have format: Barcodes,Bio Sample
     - BOM characters in CSV files are automatically stripped
     - Requires lima from bioconda (conda install -c bioconda lima)
-    - --reorganise can be applied to existing output by re-running with
-      --resume (default); already-flat samples will be tidied without
-      re-running lima. For ad-hoc retrofitting of existing directories
-      without re-running ophelia, use scripts/reorganise_ophelia.sh
+    - If --dir_out already contains a reorganised layout (presence of
+      barcoded/, reports/, or unbarcoded/ at top level or inside a sample
+      dir), Ophelia refuses to run rather than risk producing mixed output.
+      Delete --dir_out and re-invoke from scratch to re-process.
+    - There is no resume option. Each invocation runs lima on every input BAM.
+      For ad-hoc retrofitting of existing raw output into a reorganised
+      layout without re-running lima, use scripts/reorganise_ophelia.sh.
 
 EOF
 }
@@ -301,23 +359,16 @@ parse_args() {
                 shift 2
                 ;;
             --reorganise|--reorganize)
-                REORGANISE="TRUE"
-                shift
-                ;;
-            --no-reorganise|--no-reorganize)
-                REORGANISE="FALSE"
-                shift
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    log_error "--reorganise requires a mode value: --reorganise MODE"
+                    log_error "Valid modes: by-sample, by-sample-type, by-type, by-type-sample"
+                    exit 1
+                fi
+                REORGANISE="$2"
+                shift 2
                 ;;
             --drop-unbarcoded)
                 DROP_UNBARCODED="TRUE"
-                shift
-                ;;
-            --resume)
-                RESUME="TRUE"
-                shift
-                ;;
-            --no-resume)
-                RESUME="FALSE"
                 shift
                 ;;
             --dry_run|--dry-run)
@@ -379,13 +430,13 @@ validate_inputs() {
     fi
 
     # Validate threads is a non-negative integer
-    if [[ -n "${THREADS}" && ! "${THREADS}" =~ ^[0-9]+$ ]]; then
+    if [[ ! "${THREADS}" =~ ^[0-9]+$ ]]; then
         log_error "--threads must be a non-negative integer, got: ${THREADS}"
         errors=$((errors + 1))
     fi
 
     # Validate lima preset
-    local valid_presets=("ASYMMETRIC" "SYMMETRIC" "SYMMETRIC-ADAPTERS" "TAILED")
+    local valid_presets=("ASYMMETRIC" "SYMMETRIC" "SYMMETRIC-ADAPTERS")
     local preset_valid=false
     for p in "${valid_presets[@]}"; do
         if [[ "${LIMA_PRESET}" == "${p}" ]]; then
@@ -399,10 +450,25 @@ validate_inputs() {
         errors=$((errors + 1))
     fi
 
-    # --drop-unbarcoded requires --reorganise (it operates on the unbarcoded subdir)
-    if [[ "${DROP_UNBARCODED}" == "TRUE" && "${REORGANISE}" != "TRUE" ]]; then
-        log_error "--drop-unbarcoded requires --reorganise to be enabled"
-        errors=$((errors + 1))
+    # Validate reorganise mode (if set)
+    if [[ -n "${REORGANISE}" ]]; then
+        case "${REORGANISE}" in
+            by-sample|by-sample-type|by-type|by-type-sample) ;;
+            *)
+                log_error "Invalid --reorganise mode: ${REORGANISE}"
+                log_error "Valid modes: by-sample, by-sample-type, by-type, by-type-sample"
+                errors=$((errors + 1))
+                ;;
+        esac
+    fi
+
+    # --drop-unbarcoded requires --reorganise to be set to a non-by-sample mode
+    # (it operates on the unbarcoded/ subdir which only exists after reorganisation)
+    if [[ "${DROP_UNBARCODED}" == "TRUE" ]]; then
+        if [[ -z "${REORGANISE}" || "${REORGANISE}" == "by-sample" ]]; then
+            log_error "--drop-unbarcoded requires --reorganise with mode by-sample-type, by-type, or by-type-sample"
+            errors=$((errors + 1))
+        fi
     fi
 
     if [[ ${errors} -gt 0 ]]; then
@@ -412,6 +478,65 @@ validate_inputs() {
     fi
 
     log_info "Validation complete"
+}
+
+#==============================================================================
+# DIR_OUT STATE CHECK
+#
+# Refuses to run if --dir_out already contains a reorganised layout. Mixing
+# fresh lima output into an existing reorganised tree produces inconsistent
+# state (new files reorganised, old reorganised files untouched, possible
+# duplicates between layouts), so we require the user to clear it out first
+# or point at a fresh path. A fresh dir_out, an empty one, or one with raw
+# (flat) output from a prior run is all fine – lima will simply overwrite the
+# old files with the new ones.
+#==============================================================================
+
+check_dir_out_state() {
+    [[ -d "${DIR_OUT}" ]] || return 0   # fresh dir, nothing to check
+
+    # Top-level layout (by-type / by-type-sample signature)
+    local found_top=""
+    if   [[ -d "${DIR_OUT}/barcoded"   ]]; then found_top="barcoded"
+    elif [[ -d "${DIR_OUT}/reports"    ]]; then found_top="reports"
+    elif [[ -d "${DIR_OUT}/unbarcoded" ]]; then found_top="unbarcoded"
+    fi
+
+    if [[ -n "${found_top}" ]]; then
+        log_error "${DIR_OUT}/${found_top}/ exists – this indicates a previous run"
+        log_error "produced a reorganised layout (by-type or by-type-sample)."
+        log_error ""
+        log_error "Ophelia refuses to run on an existing reorganised --dir_out to"
+        log_error "avoid mixing fresh lima output with old reorganised files."
+        log_error ""
+        log_error "To re-run: delete ${DIR_OUT} and re-invoke from scratch, or"
+        log_error "point --dir_out at a fresh path."
+        exit 1
+    fi
+
+    # Per-sample layout (by-sample-type signature).
+    # `shopt -p nullglob` exits 1 when nullglob is off; `|| true` keeps
+    # set -e from killing the script while preserving the stdout for eval.
+    local prev_nullglob
+    prev_nullglob=$(shopt -p nullglob || true)
+    shopt -s nullglob
+    local sample_dir
+    for sample_dir in "${DIR_OUT}"/*/; do
+        if is_sample_reorganised "${sample_dir}"; then
+            eval "${prev_nullglob}"
+            log_error "${sample_dir} contains a reorganised layout (barcoded/,"
+            log_error "reports/, or unbarcoded/ subdirectory) – this indicates a"
+            log_error "previous run used --reorganise by-sample-type."
+            log_error ""
+            log_error "Ophelia refuses to run on an existing reorganised --dir_out to"
+            log_error "avoid mixing fresh lima output with old reorganised files."
+            log_error ""
+            log_error "To re-run: delete ${DIR_OUT} and re-invoke from scratch, or"
+            log_error "point --dir_out at a fresh path."
+            exit 1
+        fi
+    done
+    eval "${prev_nullglob}"
 }
 
 #==============================================================================
@@ -448,8 +573,15 @@ setup_environment() {
         log_debug "No conda/micromamba found, assuming lima is in PATH"
     fi
 
-    # Check lima is available
+    # Check lima is available. In dry-run we warn instead of exiting, so the
+    # canonical "preview the run from my laptop before qsub" workflow works on
+    # machines without lima installed.
     if ! command -v lima &> /dev/null; then
+        if [[ "${DRY_RUN}" == "TRUE" ]]; then
+            log_warn "lima not found in PATH – an actual run would fail here"
+            LIMA_VERSION="(unknown - dry run)"
+            return 0
+        fi
         log_error "lima not found in PATH"
         echo ""
         echo "To install lima:"
@@ -478,18 +610,10 @@ preprocess_biosample_csv() {
 
     log_info "Checking biosample CSV..."
 
-    # Check for BOM character and create a cleaned copy if found
-    # Uses perl for cross-platform compatibility (BSD sed does not support hex escapes)
-    if head -c 3 "${BIOSAMPLE_CSV}" | grep -q $'\xef\xbb\xbf'; then
-        log_warn "BOM character detected in biosample CSV"
-
-        local cleaned_csv="${DIR_OUT}/biosample_cleaned.csv"
-        perl -pe 's/^\xEF\xBB\xBF//' "${BIOSAMPLE_CSV}" > "${cleaned_csv}"
-        log_info "Created BOM-stripped copy: ${cleaned_csv}"
-        BIOSAMPLE_CSV="${cleaned_csv}"
-    fi
-
-    # Validate CSV format
+    # Validate CSV format. Done up front against the original path so it
+    # works even in dry-run (where we substitute BIOSAMPLE_CSV below without
+    # actually writing the cleaned copy). The header regex tolerates a BOM
+    # prefix on the first line.
     local header
     header=$(head -1 "${BIOSAMPLE_CSV}")
     if [[ ! "${header}" =~ [Bb]arcode.*[Ss]ample ]]; then
@@ -501,6 +625,24 @@ preprocess_biosample_csv() {
     local entries
     entries=$(($(wc -l < "${BIOSAMPLE_CSV}") - 1))
     log_info "Biosample CSV contains ${entries} entries"
+
+    # Check for BOM character and create a cleaned copy if found.
+    # Uses perl for cross-platform compatibility (BSD sed does not support hex escapes).
+    if head -c 3 "${BIOSAMPLE_CSV}" | grep -q $'\xef\xbb\xbf'; then
+        log_warn "BOM character detected in biosample CSV"
+
+        local cleaned_csv="${DIR_OUT}/biosample_cleaned.csv"
+        if [[ "${DRY_RUN}" == "TRUE" ]]; then
+            log_info "  [DRY RUN] Would create BOM-stripped copy at ${cleaned_csv}"
+            # Point BIOSAMPLE_CSV at the would-be cleaned copy so the dry-run
+            # lima command preview matches what an actual run would execute.
+            BIOSAMPLE_CSV="${cleaned_csv}"
+        else
+            perl -pe 's/^\xEF\xBB\xBF//' "${BIOSAMPLE_CSV}" > "${cleaned_csv}"
+            log_info "Created BOM-stripped copy: ${cleaned_csv}"
+            BIOSAMPLE_CSV="${cleaned_csv}"
+        fi
+    fi
 }
 
 #==============================================================================
@@ -528,12 +670,18 @@ find_input_files() {
 
 #==============================================================================
 # REORGANISE WRAPPER
-# Calls the shared library function and logs the result.
+# Skips the call entirely for by-sample (no-op) and empty REORGANISE.
 #==============================================================================
+
+should_reorganise() {
+    [[ -n "${REORGANISE}" && "${REORGANISE}" != "by-sample" ]]
+}
 
 reorganise_with_logging() {
     local sample_dir="$1"
     local label="${2:-Reorganised}"
+
+    should_reorganise || return 0
 
     local drop_flag=0
     [[ "${DROP_UNBARCODED}" == "TRUE" ]] && drop_flag=1
@@ -541,18 +689,19 @@ reorganise_with_logging() {
     local dry_flag=0
     [[ "${DRY_RUN}" == "TRUE" ]] && dry_flag=1
 
-    if reorganise_sample_dir "${sample_dir}" "${drop_flag}" "${dry_flag}"; then
+    if reorganise_sample_dir "${sample_dir}" "${REORGANISE}" "${DIR_OUT}" \
+            "${drop_flag}" "${dry_flag}"; then
         # Only log if at least one file was touched
         local total=$((REORG_BARCODED + REORG_REPORTS + REORG_UNBARCODED + REORG_DROPPED))
         if [[ ${total} -gt 0 ]]; then
-            local msg="  ${label}: barcoded=${REORG_BARCODED}, reports=${REORG_REPORTS}, unbarcoded=${REORG_UNBARCODED}"
+            local msg="  ${label} (${REORGANISE}): barcoded=${REORG_BARCODED}, reports=${REORG_REPORTS}, unbarcoded=${REORG_UNBARCODED}"
             if [[ "${DROP_UNBARCODED}" == "TRUE" ]]; then
                 msg="${msg}, dropped=${REORG_DROPPED}"
             fi
             log_info "${msg}"
         fi
     else
-        log_debug "  Reorganise skipped (no sample dir): ${sample_dir}"
+        log_debug "  Reorganise skipped (no sample dir or invalid mode): ${sample_dir}"
     fi
 }
 
@@ -565,8 +714,9 @@ process_bam() {
     local bam_name
     bam_name=$(basename "${input_bam}" .bam)
 
+    # Output directory: bare BAM basename, no prefix (breaking change from 1.1.x)
     local output_subdir
-    output_subdir="${DIR_OUT}/demux_${bam_name}"
+    output_subdir="${DIR_OUT}/${bam_name}"
 
     local output_prefix="${bam_name}.demux"
     local output_bam="${output_subdir}/${output_prefix}.bam"
@@ -576,25 +726,10 @@ process_bam() {
     log_info "  Input:  ${input_bam}"
     log_info "  Output: ${output_subdir}/"
 
-    # Check if already processed (resume logic). Layout-aware: looks for the
-    # summary file in either the flat or reorganised location.
-    # Lima ≤2.7 wrote "ZMWs above all thresholds"; lima ≥2.8 writes
-    # "Reads above all thresholds (A)". Accept both for forward/backward compatibility.
-    if [[ "${RESUME}" == "TRUE" ]]; then
-        local summary_file
-        summary_file=$(locate_summary_file "${output_subdir}" "${output_prefix}")
-        if [[ -n "${summary_file}" ]] && grep -qE "^(ZMWs|Reads) above all thresholds" "${summary_file}" 2>/dev/null; then
-            log_info "  Skipping (already processed, --resume)"
-            # If layout is flat but reorganise is requested, tidy up now.
-            if [[ "${REORGANISE}" == "TRUE" && "${summary_file}" == "${output_subdir}/${output_prefix}.lima.summary" ]]; then
-                reorganise_with_logging "${output_subdir}" "Reorganised (resume)"
-            fi
-            return 0
-        fi
-    fi
-
     # Create output directory
-    mkdir -p "${output_subdir}"
+    if [[ "${DRY_RUN}" != "TRUE" ]]; then
+        mkdir -p "${output_subdir}"
+    fi
 
     # Build lima command
     local lima_cmd=("lima")
@@ -622,8 +757,8 @@ process_bam() {
     # Execute or dry run
     if [[ "${DRY_RUN}" == "TRUE" ]]; then
         log_info "  [DRY RUN] Would execute: ${lima_cmd[*]}"
-        if [[ "${REORGANISE}" == "TRUE" ]]; then
-            log_info "  [DRY RUN] Would then reorganise output into barcoded/reports/unbarcoded/"
+        if should_reorganise; then
+            log_info "  [DRY RUN] Would then reorganise output (${REORGANISE})"
         fi
         return 0
     fi
@@ -632,9 +767,7 @@ process_bam() {
     if "${lima_cmd[@]}"; then
         log_info "  ✓ Complete"
 
-        # Report summary statistics (look in flat location since lima just wrote there)
-        # Lima ≤2.7 used "ZMWs input"/"ZMWs above all thresholds"; lima ≥2.8 uses
-        # "Reads input"/"Reads above all thresholds (A)". Accept both.
+        # Report summary statistics (read from the flat location – lima just wrote there)
         local summary_file="${output_subdir}/${output_prefix}.lima.summary"
         if [[ -f "${summary_file}" ]]; then
             local reads_input reads_pass
@@ -644,9 +777,7 @@ process_bam() {
         fi
 
         # Reorganise this sample's output if requested
-        if [[ "${REORGANISE}" == "TRUE" ]]; then
-            reorganise_with_logging "${output_subdir}" "Reorganised"
-        fi
+        reorganise_with_logging "${output_subdir}" "Reorganised"
 
         return 0
     else
@@ -657,6 +788,8 @@ process_bam() {
 
 #==============================================================================
 # GENERATE SUMMARY
+# Uses locate_summary_file to find the summary regardless of which layout
+# the run ended up in.
 #==============================================================================
 
 generate_summary() {
@@ -679,7 +812,7 @@ generate_summary() {
         echo "  biosample_csv:   ${BIOSAMPLE_CSV:-none}"
         echo "  lima_preset:     ${LIMA_PRESET}"
         echo "  lima_args:       ${LIMA_ARGS}"
-        echo "  reorganise:      ${REORGANISE}"
+        echo "  reorganise:      ${REORGANISE:-by-sample (default)}"
         echo "  drop_unbarcoded: ${DROP_UNBARCODED}"
         echo ""
         echo "Files processed: ${#INPUT_FILES[@]}"
@@ -689,16 +822,12 @@ generate_summary() {
         for f in "${INPUT_FILES[@]}"; do
             local bam_name
             bam_name=$(basename "$f" .bam)
-            local output_subdir
-            output_subdir="${DIR_OUT}/demux_${bam_name}"
 
-            # Layout-aware lookup for the summary file
+            # Layout-aware lookup for the summary file (across all reorganise modes)
             local summary
-            summary=$(locate_summary_file "${output_subdir}" "${bam_name}.demux")
+            summary=$(locate_summary_file "${DIR_OUT}" "${bam_name}")
             if [[ -n "${summary}" ]]; then
                 local reads_input reads_pass pct
-                # Lima ≤2.7 used "ZMWs input"/"ZMWs above all thresholds"; lima ≥2.8 uses
-                # "Reads input"/"Reads above all thresholds (A)". Accept both.
                 reads_input=$(grep -E "^(ZMWs|Reads) input" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
                 reads_pass=$(grep -E "^(ZMWs|Reads) above all thresholds" "${summary}" | grep -oE '[0-9]+' | head -1 || echo "0")
                 if [[ "${reads_input}" -gt 0 ]]; then
@@ -746,11 +875,10 @@ save_parameters() {
         echo "lima_args=${LIMA_ARGS}"
         echo ""
         echo "# Output organisation"
-        echo "reorganise=${REORGANISE}"
+        echo "reorganise=${REORGANISE:-by-sample (default)}"
         echo "drop_unbarcoded=${DROP_UNBARCODED}"
         echo ""
         echo "# Execution"
-        echo "resume=${RESUME}"
         echo "dry_run=${DRY_RUN}"
         echo "verbose=${VERBOSE}"
     } > "${params_file}"
@@ -788,16 +916,26 @@ main() {
     # Validate inputs (errors now captured in log)
     validate_inputs
 
-    # Create output directory
-    mkdir -p "${DIR_OUT}"
-    log_info "Output directory: ${DIR_OUT}"
+    # Refuse to overwrite an existing reorganised dir_out
+    check_dir_out_state
 
-    if [[ "${REORGANISE}" == "TRUE" ]]; then
+    # Create output directory (skip in dry-run to keep it side-effect-free)
+    if [[ "${DRY_RUN}" == "TRUE" ]]; then
+        log_info "Output directory: ${DIR_OUT} (would be created – dry run)"
+    else
+        mkdir -p "${DIR_OUT}"
+        log_info "Output directory: ${DIR_OUT}"
+    fi
+
+    # Announce the layout we'll write
+    if should_reorganise; then
+        local layout_msg="Output layout: ${REORGANISE}"
         if [[ "${DROP_UNBARCODED}" == "TRUE" ]]; then
-            log_info "Output layout: reorganised (unbarcoded files will be DELETED)"
-        else
-            log_info "Output layout: reorganised (barcoded/, reports/, unbarcoded/)"
+            layout_msg="${layout_msg} (unbarcoded files will be DELETED)"
         fi
+        log_info "${layout_msg}"
+    else
+        log_info "Output layout: by-sample (raw lima output, no reorganisation)"
     fi
 
     # Save parameters
